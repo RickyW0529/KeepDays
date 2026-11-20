@@ -1,0 +1,94 @@
+name: KeepDays Debian-13 CI/CD
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      deploy_to_server:
+        description: "Deploy verified artifact via SSH (requires DEPLOY_HOST & DEPLOY_SSH_KEY secrets)"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Automated Rust Backend Security & E2E Integration Suite
+  # ---------------------------------------------------------------------------
+  test-backend:
+    name: Rust E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "agent-kernel -> target"
+      - name: Run full KeepDays E2E test suite
+        working-directory: backend
+        run: cargo test --test api_e2e
+
+  # ---------------------------------------------------------------------------
+  # 2. Build & Verify Release inside Debian 13 (Trixie) Container
+  # ---------------------------------------------------------------------------
+  build-and-deploy:
+    name: Debian-13 Build & SSH Deploy
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: test-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU & Docker Buildx (Multi-Arch Linux Support)
+        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Detect Target CPU Architecture (or default amd64)
+        id: arch
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+        run: |
+          if [[ -n "${SSH_PRIVATE_KEY}" && -n "${DEPLOY_HOST}" ]]; then
+            mkdir -p ~/.ssh
+            echo "${SSH_PRIVATE_KEY}" > ~/.ssh/id_deploy
+            chmod 600 ~/.ssh/id_deploy
+            ssh-keyscan -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+            REMOTE_M=$(ssh -i ~/.ssh/id_deploy "${DEPLOY_USER}@${DEPLOY_HOST}" "uname -m" | tr -d '[:space:]')
+            echo "Detected remote uname -m: ${REMOTE_M}"
+          else
+            REMOTE_M="x86_64"
+            echo "SSH secrets not set; building default x86_64 (amd64) Debian-13 artifact."
+          fi
+
+          if [[ "${REMOTE_M}" == "aarch64" ]]; then
+            echo "arch_tag=arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "arch_tag=amd64" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build & Verify Debian-13 Release Bundle
+        run: |
+          chmod +x ./deploy/build-artifact.sh
+          ./deploy/build-artifact.sh "${{ steps.arch.outputs.arch_tag }}"
+
+      - name: Upload Verified Release Bundle Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: keepdays-debian13-${{ steps.arch.outputs.arch_tag }}
+          path: deploy/out/keepdays-debian13-${{ steps.arch.outputs.arch_tag }}.tar.gz
+          retention-days: 14
+
+      - name: Atomic SSH Deploy
+        if: ${{ secrets.DEPLOY_SSH_KEY != '' && secrets.DEPLOY_HOST != '' && inputs.deploy_to_server == true }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER || 'root' }}
+          DEPLOY_PORT: ${{ secrets.KEEPDAYS_PORT || '3090' }}
+        run: |
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/id_deploy"
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_deploy
+          chmod +x ./deploy/deploy-ssh.sh
+          DEPLOY_SSH="${DEPLOY_USER}@${DEPLOY_HOST}" DEPLOY_PORT="${DEPLOY_PORT}" ./deploy/deploy-ssh.sh

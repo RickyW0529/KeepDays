@@ -1,0 +1,31 @@
+[Unit]
+Description=KeepDays Intimate Digital Home (Debian 13 Single-Binary Service)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keepdays
+Group=keepdays
+WorkingDirectory=/opt/keepdays
+EnvironmentFile=/etc/keepdays/keepdays.env
+ExecStartPre=/opt/keepdays/keepdays-server --self-check
+ExecStart=/opt/keepdays/keepdays-server
+Restart=always
+RestartSec=3
+
+# Strict memory guardrails for Vultr 1vCPU / 512MB RAM VPS
+# Guarantees KeepDays NEVER starves existing Xray (443), WireGuard, or Demo (8080)!
+MemoryHigh=200M
+MemoryMax=280M
+LimitNOFILE=32768
+
+# Security & Persistent Data Isolation (/var/lib/keepdays)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/keepdays
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+[package]
+license = "Apache-2.0"
+name = "xai-grok-extra-ca"
+version = "0.1.0"
+edition.workspace = true
+description = "TLS policy for agent-kernel: rustls ring backend pin, shared root store, and opt-in extra CA bundle roots"
+
+[dependencies]
+base64 = { workspace = true }
+reqwest = { workspace = true, features = ["blocking", "rustls-tls-native-roots", "rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+rustls-native-certs = { workspace = true }
+tracing = { workspace = true }
+webpki-roots = { workspace = true }
+
+[dev-dependencies]
+rcgen = { workspace = true }
+rustls = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

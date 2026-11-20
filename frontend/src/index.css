@@ -1,0 +1,350 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   KeepDays Architectural Color & Proportion System
+   Warm Alabaster Gallery (Day) & Warm Darkroom Charcoal (Night — never pitch black)
+   ============================================================================ */
+
+:root {
+  color-scheme: light;
+  /* Shared Space · Daylight: Warm Gallery Alabaster & SMEG Cream Enamel */
+  --kd-surface: #F6F4EF;
+  --kd-panel: #FCFBF9;
+  --kd-overlay: #EFECE5;
+  --kd-fridge: #EAE5DC;
+  --kd-fridge-hi: #F5F2EC;
+  --kd-fridge-edge: #D6CFC3;
+  --kd-fridge-seam: rgba(40, 34, 28, 0.16);
+  --kd-handle: linear-gradient(180deg, #FDFCFB 0%, #CFC8BC 52%, #B9B1A3 100%);
+  --kd-border: rgba(32, 28, 24, 0.08);
+  --kd-border-strong: rgba(32, 28, 24, 0.16);
+  --kd-ink: #1F1D1A;
+  --kd-muted: #746E66;
+  --kd-subtle: #A39C93;
+  --kd-accent: #B85D43;
+  --kd-accent-soft: rgba(184, 93, 67, 0.11);
+  --kd-nightlight: rgba(244, 194, 118, 0);
+  --kd-mat: #EFECE5;
+  --kd-print-shadow: 0 20px 48px rgba(20, 18, 15, 0.12), 0 2px 8px rgba(20, 18, 15, 0.05);
+
+  /* Tactile Note Papers */
+  --kd-paper-white: #FEFEFC;
+  --kd-paper-oat: #F6F0E2;
+  --kd-paper-sage: #EAEEE7;
+  --kd-paper-blush: #F5E9E5;
+}
+
+/* Personal Space: Cool Architectural Mist Stone */
+:root[data-space="personal"] {
+  --kd-surface: #F3F5F6;
+  --kd-panel: #FAFBFC;
+  --kd-overlay: #E8ECEE;
+  --kd-mat: #EAECEF;
+  --kd-fridge: #E3E7EA;
+  --kd-fridge-hi: #EFF2F4;
+  --kd-fridge-edge: #CDD4D9;
+}
+
+/* Dusk: Soft Golden Hour */
+:root[data-ambient="dusk"] {
+  --kd-surface: #F1EAE0;
+  --kd-panel: #FAF6F0;
+  --kd-overlay: #E7DDD0;
+  --kd-mat: #E8DFD2;
+  --kd-fridge: #E6DDD0;
+  --kd-fridge-hi: #F2ECE2;
+  --kd-fridge-edge: #D2C6B5;
+}
+
+/* Night: Warm Darkroom Charcoal (Rich espresso undertone, NEVER cold #000) */
+:root[data-ambient="night"] {
+  color-scheme: dark;
+  --kd-surface: #161514;
+  --kd-panel: #1F1E1C;
+  --kd-overlay: #292724;
+  --kd-mat: #141312;
+  --kd-print-shadow: 0 24px 60px rgba(0, 0, 0, 0.56), 0 2px 10px rgba(0, 0, 0, 0.35);
+  --kd-fridge: #272522;
+  --kd-fridge-hi: #322F2B;
+  --kd-fridge-edge: #3B3833;
+  --kd-fridge-seam: rgba(0, 0, 0, 0.58);
+  --kd-handle: linear-gradient(180deg, #6E6A63 0%, #4A4742 55%, #383531 100%);
+  --kd-border: rgba(245, 239, 230, 0.08);
+  --kd-border-strong: rgba(245, 239, 230, 0.16);
+  --kd-ink: #EFECE6;
+  --kd-muted: #9C958C;
+  --kd-subtle: #6E6860;
+  --kd-accent: #D4765B;
+  --kd-accent-soft: rgba(212, 118, 91, 0.15);
+  --kd-nightlight: rgba(248, 198, 120, 0.36);
+
+  --kd-paper-white: #2C2A27;
+  --kd-paper-oat: #302C25;
+  --kd-paper-sage: #262C27;
+  --kd-paper-blush: #312726;
+}
+
+@theme {
+  --color-surface: var(--kd-surface);
+  --color-panel: var(--kd-panel);
+  --color-overlay: var(--kd-overlay);
+  --color-fridge: var(--kd-fridge);
+  --color-fridge-edge: var(--kd-fridge-edge);
+  --color-border: var(--kd-border);
+  --color-border-strong: var(--kd-border-strong);
+  --color-ink: var(--kd-ink);
+  --color-muted: var(--kd-muted);
+  --color-subtle: var(--kd-subtle);
+  --color-accent: var(--kd-accent);
+  --color-accent-soft: var(--kd-accent-soft);
+
+  --color-paper-white: var(--kd-paper-white);
+  --color-paper-oat: var(--kd-paper-oat);
+  --color-paper-sage: var(--kd-paper-sage);
+  --color-paper-blush: var(--kd-paper-blush);
+
+  --radius-card: 1rem;
+  --radius-slip: 0.375rem;
+  --radius-input: 0.625rem;
+  --radius-chip: 9999px;
+
+  --shadow-xs: 0 1px 2px rgba(20, 18, 15, 0.05);
+  --shadow-paper: 0 2px 6px rgba(20, 18, 15, 0.08), 0 1px 1px rgba(20, 18, 15, 0.05);
+  --shadow-fridge: 0 24px 56px rgba(12, 11, 10, 0.24), 0 4px 12px rgba(12, 11, 10, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --shadow-float: 0 18px 44px rgba(12, 11, 10, 0.18);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+html,
+body {
+  background-color: var(--kd-surface);
+  color: var(--kd-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", sans-serif;
+  letter-spacing: -0.008em;
+  transition: background-color 0.5s ease, color 0.35s ease;
+  overscroll-behavior-y: none;
+}
+
+.font-editorial {
+  font-family: "New York", "Playfair Display", "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
+  letter-spacing: -0.015em;
+}
+
+.pt-safe {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+}
+.pb-safe {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+/* Outer Appliance Housing Chassis */
+.kd-fridge-chassis {
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--kd-fridge-edge) 72%, white) 0%,
+    var(--kd-fridge-edge) 55%,
+    color-mix(in srgb, var(--kd-fridge-edge) 80%, black) 100%
+  );
+  box-shadow:
+    0 30px 72px rgba(10, 9, 8, 0.34),
+    0 8px 20px rgba(10, 9, 8, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+:root[data-ambient="night"] .kd-fridge-chassis {
+  background: linear-gradient(160deg, #3A3732 0%, #23211E 58%, #181614 100%);
+  box-shadow:
+    0 34px 80px rgba(0, 0, 0, 0.62),
+    0 8px 24px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* Softly Cambered 3D Enamel / Matte Lacquered Door Panels */
+.kd-fridge-body,
+.kd-fridge-door {
+  background: linear-gradient(
+    112deg,
+    var(--kd-fridge-hi) 0%,
+    var(--kd-fridge) 54%,
+    color-mix(in srgb, var(--kd-fridge) 93%, #1A1612) 100%
+  );
+  box-shadow:
+    inset 0 1.5px 1px rgba(255, 255, 255, 0.62),
+    inset 1.5px 0 1px rgba(255, 255, 255, 0.35),
+    inset -1.5px -2px 3px rgba(28, 22, 16, 0.09),
+    0 1px 2px rgba(0, 0, 0, 0.12);
+}
+:root[data-ambient="night"] .kd-fridge-body,
+:root[data-ambient="night"] .kd-fridge-door {
+  background: linear-gradient(112deg, #33302C 0%, #262421 56%, #1E1C1A 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.13),
+    inset 1px 0 1px rgba(255, 255, 255, 0.06),
+    inset -1.5px -2px 4px rgba(0, 0, 0, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* Physical Recessed Gasket Channel Between Upper Freezer & Lower Chiller Door */
+.kd-fridge-seam {
+  background: linear-gradient(
+    180deg,
+    rgba(20, 17, 14, 0.32) 0%,
+    var(--kd-fridge-seam) 55%,
+    rgba(255, 255, 255, 0.12) 100%
+  );
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.32);
+}
+
+/* Cylindrical Machined Aluminum Handle with Cast Contact Shadow */
+.kd-fridge-handle {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.85) 0%,
+    #DDD6CA 38%,
+    #B8B0A2 78%,
+    #9E9688 100%
+  );
+  box-shadow:
+    3px 4px 8px rgba(22, 18, 14, 0.22),
+    1px 1px 2px rgba(22, 18, 14, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+:root[data-ambient="night"] .kd-fridge-handle {
+  background: linear-gradient(90deg, #7A756D 0%, #55514B 45%, #3A3733 85%, #2D2A27 100%);
+  box-shadow:
+    3px 5px 10px rgba(0, 0, 0, 0.55),
+    1px 1px 2px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+/* 3D Spherical Matte Ceramic Magnet Pins */
+.kd-magnet-charcoal {
+  background: radial-gradient(circle at 32% 28%, #57534E 0%, #292524 62%, #171514 100%);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.28), inset 0 0.5px 0.5px rgba(255, 255, 255, 0.3);
+}
+.kd-magnet-terracotta {
+  background: radial-gradient(circle at 32% 28%, #DF896E 0%, #B85D43 62%, #8C3F29 100%);
+  box-shadow: 0 2px 3px rgba(120, 48, 28, 0.32), inset 0 0.5px 0.5px rgba(255, 255, 255, 0.38);
+}
+.kd-magnet-muted {
+  background: radial-gradient(circle at 32% 28%, #C4BDB3 0%, #968F85 68%, #756E65 100%);
+  box-shadow: 0 1.5px 2.5px rgba(0, 0, 0, 0.2);
+}
+
+/* Subtle Co-Presence Photo Breathing Rim */
+@keyframes presence-rim {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1.5px var(--kd-accent), 0 0 12px rgba(184, 93, 67, 0.22);
+  }
+  50% {
+    box-shadow: inset 0 0 0 2px var(--kd-accent), 0 0 20px rgba(184, 93, 67, 0.42);
+  }
+}
+
+.animate-presence-rim {
+  animation: presence-rim 2.8s ease-in-out infinite;
+}
+
+@keyframes nightlight-breathe {
+  0%, 100% { opacity: 0.78; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+.animate-nightlight {
+  animation: nightlight-breathe 5s ease-in-out infinite;
+}
+
+/* Lifelike Unhurried Feline 4-Beat Stroll & Micro-Action Keyframes */
+@keyframes kd-paw-stride-a {
+  0%, 100% { transform: rotate(-13deg); }
+  50% { transform: rotate(13deg); }
+}
+@keyframes kd-paw-stride-b {
+  0%, 100% { transform: rotate(13deg); }
+  50% { transform: rotate(-13deg); }
+}
+@keyframes kd-body-stroll {
+  0%, 100% { transform: translateY(0px); }
+  25%, 75% { transform: translateY(-0.75px); }
+  50% { transform: translateY(0.15px); }
+}
+@keyframes kd-tail-sway {
+  0%, 100% { transform: rotate(-5deg); }
+  50% { transform: rotate(7deg); }
+}
+@keyframes kd-groom-nod {
+  0%, 100% { transform: rotate(0deg) translateY(0px); }
+  45% { transform: rotate(9deg) translateY(1.2px); }
+}
+@keyframes kd-groom-paw {
+  0%, 100% { transform: translateY(0px) rotate(0deg); }
+  45% { transform: translateY(-2.2px) rotate(-14deg); }
+}
+@keyframes kd-sleep-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(1.045); }
+}
+@keyframes kd-eye-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.08); }
+}
+
+.kd-paw-a {
+  transform-box: fill-box;
+  transform-origin: 50% 10%;
+  animation: kd-paw-stride-a 1.08s ease-in-out infinite;
+}
+.kd-paw-b {
+  transform-box: fill-box;
+  transform-origin: 50% 10%;
+  animation: kd-paw-stride-b 1.08s ease-in-out infinite;
+}
+.kd-stroll-body {
+  animation: kd-body-stroll 1.08s ease-in-out infinite;
+}
+.kd-tail-sway {
+  transform-box: fill-box;
+  transform-origin: 15% 85%;
+  animation: kd-tail-sway 3.2s ease-in-out infinite;
+}
+.kd-groom-head {
+  transform-box: fill-box;
+  transform-origin: 50% 80%;
+  animation: kd-groom-nod 0.85s ease-in-out infinite;
+}
+.kd-groom-paw {
+  transform-box: fill-box;
+  transform-origin: 50% 90%;
+  animation: kd-groom-paw 0.85s ease-in-out infinite;
+}
+.kd-sleep-loaf {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: kd-sleep-breathe 3.8s ease-in-out infinite;
+}
+.kd-eye-blink {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: kd-eye-blink 5.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--kd-border-strong);
+  border-radius: 9999px;
+}

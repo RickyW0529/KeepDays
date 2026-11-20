@@ -1,0 +1,15 @@
+agent-kernel/target
+backend/target
+backend/data
+backend/.env
+frontend/node_modules
+frontend/dist
+frontend/*.tsbuildinfo
+deploy/out
+.minio-data
+.redis-data
+.git
+.idea
+.vscode
+.DS_Store
+*.swp

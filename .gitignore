@@ -1,0 +1,37 @@
+# Rust & Kernel Build Outputs
+/backend/target/
+/agent-kernel/target/
+**/target/
+**/*.rs.bk
+
+# Runtime Databases, Local Uploads & Secrets (NEVER commit!)
+/backend/data/
+**/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!**/.env.example
+!**/keepdays.env.production
+/backend/.env
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/*.tsbuildinfo
+/frontend/.env.local
+
+# Local Dev Volumes & Packaging Stagings
+.minio-data/
+.redis-data/
+/deploy/out/
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.log

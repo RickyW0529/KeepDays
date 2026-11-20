@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#F6F4EF" />
+    <title>KeepDays</title>
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem('kd_theme_pref');
+          var phase = pref === 'daylight' || pref === 'night' ? pref : null;
+          if (!phase) {
+            var p = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date());
+            var h = +p.find(function (x) { return x.type === 'hour'; }).value;
+            var m = +p.find(function (x) { return x.type === 'minute'; }).value;
+            var t = h * 60 + m;
+            phase = t >= 420 && t < 1050 ? 'daylight' : t >= 1050 && t < 1170 ? 'dusk' : 'night';
+          }
+          document.documentElement.dataset.ambient = phase;
+          var bg = phase === 'night' ? '#161514' : phase === 'dusk' ? '#F1EAE0' : '#F6F4EF';
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', bg);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="antialiased selection:bg-accent/15 selection:text-accent">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

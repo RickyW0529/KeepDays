@@ -1,0 +1,24 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: keepdays-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./.redis-data:/data
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: keepdays-minio
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_ROOT_USER: keepdays_dev
+      MINIO_ROOT_PASSWORD: keepdays_dev_secret
+    command: server /data --console-address ":9001"
+    volumes:
+      - ./.minio-data:/data
+    restart: unless-stopped

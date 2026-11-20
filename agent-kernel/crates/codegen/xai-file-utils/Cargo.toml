@@ -1,0 +1,22 @@
+[package]
+license = "Apache-2.0"
+name = "xai-file-utils"
+version = "0.1.0"
+edition.workspace = true
+description = "SHA-256 hashing and pure-Rust S3 SigV4 presigning utilities for agent-kernel"
+
+[features]
+default-bazel = []
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+hmac = { workspace = true }
+reqwest = { workspace = true }
+reqwest-middleware = { workspace = true }
+sha2 = { workspace = true, features = ["force-soft"] }
+url = { workspace = true }
+xai-grok-auth = { path = "../xai-grok-auth", features = ["middleware"] }
+
+[lints]
+workspace = true
