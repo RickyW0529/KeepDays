@@ -1,15 +1,22 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { AuthScreen } from './components/AuthScreen';
 import { FridgeSystem, type FridgeStage } from './components/FridgeSystem';
-import { PetDrawer } from './components/PetDrawer';
-import { PhotoMomentsModal } from './components/PhotoMomentsModal';
 import { PhotoWallCanvas, type QueuedPhotoUploadItem } from './components/PhotoWallCanvas';
 import { PlatformToolbox, type ToolboxTab } from './components/PlatformToolbox';
-import { ProfileDrawer } from './components/ProfileDrawer';
 import { RoamingPetLayer } from './components/RoamingPetLayer';
 import { toast, Toaster } from './components/Toaster';
 import { TopFloatingBar } from './components/TopFloatingBar';
+
+const PetDrawer = lazy(() =>
+  import('./components/PetDrawer').then((m) => ({ default: m.PetDrawer })),
+);
+const PhotoMomentsModal = lazy(() =>
+  import('./components/PhotoMomentsModal').then((m) => ({ default: m.PhotoMomentsModal })),
+);
+const ProfileDrawer = lazy(() =>
+  import('./components/ProfileDrawer').then((m) => ({ default: m.ProfileDrawer })),
+);
 import { useBeijingAmbient } from './hooks/useBeijingAmbient';
 import { useSpaceRealtime } from './hooks/useSpaceRealtime';
 import {
@@ -706,68 +713,70 @@ export const App: React.FC = () => {
       />
 
       {/* 6. WeChat-Moments Style Photo Lightbox + Optimistic Voice/Text Comments */}
-      <AnimatePresence>
-        {selectedPhoto && (
-          <PhotoMomentsModal
-            spaceId={activeSpace.id}
-            selfUserId={currentUser.id}
-            photo={selectedPhoto}
-            photoIndex={selectedIdx >= 0 ? selectedIdx : 0}
-            totalPhotos={photos.length}
-            spaces={spaces}
-            usersMap={usersMap}
-            assetUrls={assetUrls}
-            hasPrev={selectedIdx > 0}
-            hasNext={selectedIdx >= 0 && selectedIdx < photos.length - 1}
-            onNavigate={navigatePhoto}
-            onClose={() => setSelectedPhoto(null)}
-            onPhotoMutated={(updated, extraUrls) => {
-              setSelectedPhoto(updated);
-              setPhotos((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-              if (extraUrls) mergeHydrated(undefined, extraUrls);
-            }}
-            onPhotoDeleted={(pid) => {
-              setSelectedPhoto(null);
-              setPhotos((prev) => prev.filter((x) => x.id !== pid));
-            }}
-          />
-        )}
-      </AnimatePresence>
+      <Suspense fallback={null}>
+        <AnimatePresence>
+          {selectedPhoto && (
+            <PhotoMomentsModal
+              spaceId={activeSpace.id}
+              selfUserId={currentUser.id}
+              photo={selectedPhoto}
+              photoIndex={selectedIdx >= 0 ? selectedIdx : 0}
+              totalPhotos={photos.length}
+              spaces={spaces}
+              usersMap={usersMap}
+              assetUrls={assetUrls}
+              hasPrev={selectedIdx > 0}
+              hasNext={selectedIdx >= 0 && selectedIdx < photos.length - 1}
+              onNavigate={navigatePhoto}
+              onClose={() => setSelectedPhoto(null)}
+              onPhotoMutated={(updated, extraUrls) => {
+                setSelectedPhoto(updated);
+                setPhotos((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                if (extraUrls) mergeHydrated(undefined, extraUrls);
+              }}
+              onPhotoDeleted={(pid) => {
+                setSelectedPhoto(null);
+                setPhotos((prev) => prev.filter((x) => x.id !== pid));
+              }}
+            />
+          )}
+        </AnimatePresence>
 
-      {/* 7. Shared Pet Interactive Companion Drawer */}
-      <AnimatePresence>
-        {petDrawerOpen && petResp && activeSpace.is_shared && (
-          <PetDrawer
-            spaceId={activeSpace.id}
-            selfUserId={currentUser.id}
-            petResp={petResp}
-            onClose={() => setPetDrawerOpen(false)}
-            onPetChanged={(next) => {
-              setPetResp(next);
-              mergeHydrated(next.users, next.asset_urls);
-            }}
-            onOpenPhotoById={handleOpenPhotoById}
-            onRefreshFridge={() => {
-              void syncFridgePreservingOptimistic(activeSpace.id);
-            }}
-          />
-        )}
-      </AnimatePresence>
+        {/* 7. Shared Pet Interactive Companion Drawer */}
+        <AnimatePresence>
+          {petDrawerOpen && petResp && activeSpace.is_shared && (
+            <PetDrawer
+              spaceId={activeSpace.id}
+              selfUserId={currentUser.id}
+              petResp={petResp}
+              onClose={() => setPetDrawerOpen(false)}
+              onPetChanged={(next) => {
+                setPetResp(next);
+                mergeHydrated(next.users, next.asset_urls);
+              }}
+              onOpenPhotoById={handleOpenPhotoById}
+              onRefreshFridge={() => {
+                void syncFridgePreservingOptimistic(activeSpace.id);
+              }}
+            />
+          )}
+        </AnimatePresence>
 
-      {/* 8. Modular Profile Sheet */}
-      <AnimatePresence>
-        {profileDrawerUid && (
-          <ProfileDrawer
-            targetUserId={profileDrawerUid}
-            selfUserId={currentUser.id}
-            onClose={() => setProfileDrawerUid(null)}
-            onSelfUpdated={(updated, urls) => {
-              setCurrentUser(updated);
-              mergeHydrated({ [updated.id]: updated }, urls);
-            }}
-          />
-        )}
-      </AnimatePresence>
+        {/* 8. Modular Profile Sheet */}
+        <AnimatePresence>
+          {profileDrawerUid && (
+            <ProfileDrawer
+              targetUserId={profileDrawerUid}
+              selfUserId={currentUser.id}
+              onClose={() => setProfileDrawerUid(null)}
+              onSelfUpdated={(updated, urls) => {
+                setCurrentUser(updated);
+                mergeHydrated({ [updated.id]: updated }, urls);
+              }}
+            />
+          )}
+        </AnimatePresence>
+      </Suspense>
 
       <Toaster />
     </div>

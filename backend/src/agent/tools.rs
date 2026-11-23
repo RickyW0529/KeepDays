@@ -32,7 +32,29 @@ pub struct ToolExecContext {
     pub space_id: i64,
     pub user_id: i64,
     pub session_id: String,
-    pub vfs: VirtualFs,
+    vfs_cell: tokio::sync::OnceCell<VirtualFs>,
+}
+
+impl ToolExecContext {
+    pub fn new(state: AppState, space_id: i64, user_id: i64, session_id: String) -> Self {
+        Self {
+            state,
+            space_id,
+            user_id,
+            session_id,
+            vfs_cell: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// Lazily initializes `VirtualFs` (`AgentBuilder` + `LocalTerminalActor`) ONLY on turns
+    /// that actually invoke sandbox file/bash tools, keeping regular chat turns 0-allocation!
+    pub async fn vfs(&self) -> Result<&VirtualFs, String> {
+        self.vfs_cell
+            .get_or_try_init(|| {
+                VirtualFs::ensure_for(&self.state.cfg.agent_fs_dir, self.space_id, self.user_id)
+            })
+            .await
+    }
 }
 
 pub struct ToolExecOutput {
@@ -93,26 +115,6 @@ impl ToolRegistry {
         reg.register(Arc::new(MemoryResolveClarificationTool));
 
         reg
-    }
-
-    /// Install all KeepDays Mode A domain tools onto a live `agent-kernel` [`xai_grok_tools::bridge::ToolBridge`]
-    /// so `GrokBuild:search_tool` / `GrokBuild:use_tool` and direct bridge calls can invoke them natively!
-    pub fn install_into_kernel_bridge(&self, ctx: Arc<ToolExecContext>) {
-        let bridge = ctx.vfs.tool_bridge();
-        let Ok(map) = self.tools.read() else {
-            return;
-        };
-        for tool in map.values() {
-            if tool.domain() == "sandbox" || tool.name() == "search_tool" || tool.name() == "use_tool" {
-                continue;
-            }
-            let schema = tool.parameters_schema();
-            let adapter = KeepDaysRuntimeToolAdapter {
-                inner: Arc::clone(tool),
-                ctx: Arc::clone(&ctx),
-            };
-            let _ = bridge.register_custom_tool(tool.name(), adapter, Some(schema));
-        }
     }
 
     /// Plug-and-play registration hook for future KeepDays modules.
@@ -389,80 +391,6 @@ fn expand_bilingual_tool_query(q: &str) -> String {
 // 1. Always-Loaded Core Tools (`bash`, `read_file`, `edit_file`, `grep_files`, `a2ui_surface`, `search_tool`, `use_tool`)
 // ============================================================================
 
-#[derive(Clone)]
-struct KeepDaysRuntimeToolAdapter {
-    inner: Arc<dyn AgentTool>,
-    ctx: Arc<ToolExecContext>,
-}
-
-impl std::fmt::Debug for KeepDaysRuntimeToolAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("KeepDaysRuntimeToolAdapter")
-            .field("name", &self.inner.name())
-            .field("domain", &self.inner.domain())
-            .finish()
-    }
-}
-
-#[derive(Debug, serde::Serialize)]
-struct KeepDaysKernelOutput {
-    text: String,
-}
-
-impl xai_tool_runtime::ToolOutput for KeepDaysKernelOutput {
-    fn model_output(&self) -> Vec<xai_tool_runtime::ContentBlock> {
-        vec![xai_tool_runtime::ContentBlock::Text {
-            text: self.text.clone(),
-        }]
-    }
-}
-
-impl xai_grok_tools::types::tool_metadata::ToolMetadata for KeepDaysRuntimeToolAdapter {
-    fn kind(&self) -> xai_grok_tools::types::tool::ToolKind {
-        xai_grok_tools::types::tool::ToolKind::Other
-    }
-
-    fn tool_namespace(&self) -> xai_grok_tools::types::tool::ToolNamespace {
-        xai_grok_tools::types::tool::ToolNamespace::MCP
-    }
-
-    fn description_template(&self) -> &str {
-        self.inner.description()
-    }
-}
-
-impl xai_tool_runtime::Tool for KeepDaysRuntimeToolAdapter {
-    type Args = Value;
-    type Output = KeepDaysKernelOutput;
-
-    fn id(&self) -> xai_tool_protocol::ToolId {
-        xai_tool_protocol::ToolId::new(self.inner.name())
-            .unwrap_or_else(|_| xai_tool_protocol::ToolId::new("keepdays_tool").unwrap())
-    }
-
-    fn description(
-        &self,
-        _ctx: &xai_tool_runtime::ListToolsContext,
-    ) -> xai_tool_types::ToolDescription {
-        xai_tool_types::ToolDescription::new(self.inner.name(), self.inner.description())
-    }
-
-    async fn run(
-        &self,
-        _ctx: xai_tool_runtime::ToolCallContext,
-        args: Self::Args,
-    ) -> Result<Self::Output, xai_tool_runtime::ToolError> {
-        let out = self
-            .inner
-            .run(&self.ctx, args)
-            .await
-            .map_err(|e| xai_tool_runtime::ToolError::custom("keepdays_tool_error", e))?;
-        Ok(KeepDaysKernelOutput {
-            text: out.model_text,
-        })
-    }
-}
-
 struct BashTool;
 impl AgentTool for BashTool {
     fn name(&self) -> &'static str {
@@ -492,7 +420,8 @@ impl AgentTool for BashTool {
                 .get("command")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "缺少 `command` 参数".to_string())?;
-            let out = ctx.vfs.run_bash(cmd).await?;
+            let vfs = ctx.vfs().await?;
+            let out = vfs.run_bash(cmd).await?;
             Ok(ToolExecOutput {
                 display_summary: "已在安全沙箱执行脚本".to_string(),
                 model_text: out,
@@ -535,7 +464,8 @@ impl AgentTool for ReadFileTool {
                 .or_else(|| args.get("file_path"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "缺少 `path` 参数".to_string())?;
-            let (real_path, vlabel) = ctx.vfs.resolve_virtual_path(raw_path)?;
+            let vfs = ctx.vfs().await?;
+            let (real_path, vlabel) = vfs.resolve_virtual_path(raw_path)?;
 
             let mut kparams = serde_json::Map::new();
             kparams.insert(
@@ -551,8 +481,7 @@ impl AgentTool for ReadFileTool {
                 }
             }
 
-            let out = ctx
-                .vfs
+            let out = vfs
                 .call_kernel_tool("GrokBuild:read_file", Value::Object(kparams), "kd_read_call")
                 .await?;
 
@@ -598,7 +527,8 @@ impl AgentTool for EditFileTool {
                 .or_else(|| args.get("file_path"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| "缺少 `path` 参数".to_string())?;
-            let (real_path, vlabel) = ctx.vfs.resolve_virtual_path(raw_path)?;
+            let vfs = ctx.vfs().await?;
+            let (real_path, vlabel) = vfs.resolve_virtual_path(raw_path)?;
 
             if let Some(old_t) = args
                 .get("old_text")
@@ -610,8 +540,7 @@ impl AgentTool for EditFileTool {
                     .or_else(|| args.get("new_string"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let kernel_out = ctx
-                    .vfs
+                let kernel_out = vfs
                     .call_kernel_tool(
                         "GrokBuild:search_replace",
                         json!({
@@ -629,11 +558,11 @@ impl AgentTool for EditFileTool {
                 });
             } else if let Some(full) = args.get("content").and_then(|v| v.as_str()) {
                 use xai_grok_tools::computer::types::AsyncFileSystem as _;
-                let jailed_fs = xai_grok_tools::virtual_jail::JailedFs::new(ctx.vfs.jail().clone());
+                let jailed_fs = xai_grok_tools::virtual_jail::JailedFs::new(vfs.jail().clone());
                 jailed_fs
                     .write_file(&real_path, full.as_bytes())
                     .await
-                    .map_err(|e| ctx.vfs.scrub_output(&e.to_string()))?;
+                    .map_err(|e| vfs.scrub_output(&e.to_string()))?;
             } else {
                 return Err("请提供 `content` 或 `old_text` + `new_text`".to_string());
             }
@@ -672,24 +601,24 @@ impl AgentTool for GrepFilesTool {
     }
     fn run<'a>(&'a self, ctx: &'a ToolExecContext, args: Value) -> BoxFuture<'a, Result<ToolExecOutput, String>> {
         Box::pin(async move {
-            let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("both");
+            let scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("both").to_string();
             let pattern = args
                 .get("pattern")
                 .and_then(|v| v.as_str())
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
+            let vfs = ctx.vfs().await?;
 
             // Try kernel `GrokBuild:grep` first when searching by pattern; fall back to `walk_search` if `rg` is absent on host
             if let Some(pat) = pattern {
                 let mut kernel_chunks = Vec::new();
                 if scope == "both" || scope == "private" {
-                    if let Ok(out) = ctx
-                        .vfs
+                    if let Ok(out) = vfs
                         .call_kernel_tool(
                             "GrokBuild:grep",
                             json!({
                                 "pattern": pat,
-                                "path": ctx.vfs.private_root().to_string_lossy(),
+                                "path": vfs.private_root().to_string_lossy(),
                             }),
                             "kd_grep_priv",
                         )
@@ -699,13 +628,12 @@ impl AgentTool for GrepFilesTool {
                     }
                 }
                 if scope == "both" || scope == "shared" {
-                    if let Ok(out) = ctx
-                        .vfs
+                    if let Ok(out) = vfs
                         .call_kernel_tool(
                             "GrokBuild:grep",
                             json!({
                                 "pattern": pat,
-                                "path": ctx.vfs.shared_root().to_string_lossy(),
+                                "path": vfs.shared_root().to_string_lossy(),
                             }),
                             "kd_grep_shared",
                         )
@@ -727,13 +655,21 @@ impl AgentTool for GrepFilesTool {
             }
 
             let pat_lower = pattern.map(str::to_lowercase);
-            let mut hits = Vec::new();
-            if scope == "both" || scope == "private" {
-                walk_search(ctx.vfs.private_root(), "~/private", pat_lower.as_deref(), &mut hits);
-            }
-            if scope == "both" || scope == "shared" {
-                walk_search(ctx.vfs.shared_root(), "~/shared", pat_lower.as_deref(), &mut hits);
-            }
+            let priv_root = vfs.private_root().to_path_buf();
+            let shared_root = vfs.shared_root().to_path_buf();
+            let hits = tokio::task::spawn_blocking(move || {
+                let mut h = Vec::new();
+                if scope == "both" || scope == "private" {
+                    walk_search(&priv_root, "~/private", pat_lower.as_deref(), &mut h);
+                }
+                if scope == "both" || scope == "shared" {
+                    walk_search(&shared_root, "~/shared", pat_lower.as_deref(), &mut h);
+                }
+                h
+            })
+            .await
+            .unwrap_or_default();
+
             let body = if hits.is_empty() {
                 "(工作区暂无匹配文件)".to_string()
             } else {
@@ -749,14 +685,22 @@ impl AgentTool for GrepFilesTool {
 }
 
 fn walk_search(root: &Path, prefix: &str, pattern: Option<&str>, out: &mut Vec<String>) {
-    fn rec(cur: &Path, root: &Path, prefix: &str, pattern: Option<&str>, out: &mut Vec<String>) {
-        if out.len() >= 120 {
+    const MAX_READ_BYTES: u64 = 256 * 1024;
+    fn rec(cur: &Path, root: &Path, prefix: &str, pattern: Option<&str>, out: &mut Vec<String>, depth: usize) {
+        if out.len() >= 120 || depth > 12 {
             return;
         }
         let Ok(entries) = std::fs::read_dir(cur) else {
             return;
         };
         for ent in entries.flatten() {
+            let Ok(ft) = ent.file_type() else {
+                continue;
+            };
+            // Skip symlinks (`private -> .` and `shared -> ../shared`) to prevent infinite cycle recursion!
+            if ft.is_symlink() {
+                continue;
+            }
             let p = ent.path();
             if p.file_name().and_then(|s| s.to_str()) == Some(".tmp") {
                 continue;
@@ -766,15 +710,17 @@ fn walk_search(root: &Path, prefix: &str, pattern: Option<&str>, out: &mut Vec<S
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_default();
             let vpath = format!("{prefix}/{rel}");
-            if p.is_dir() {
-                rec(&p, root, prefix, pattern, out);
+            if ft.is_dir() {
+                rec(&p, root, prefix, pattern, out, depth + 1);
             } else if let Some(pat) = pattern {
-                if let Ok(txt) = std::fs::read_to_string(&p) {
-                    for (idx, line) in txt.lines().enumerate() {
-                        if line.to_lowercase().contains(pat) {
-                            out.push(format!("{vpath}:{}: {}", idx + 1, line.trim()));
-                            if out.len() >= 120 {
-                                return;
+                if ent.metadata().map(|m| m.len() <= MAX_READ_BYTES).unwrap_or(false) {
+                    if let Ok(txt) = std::fs::read_to_string(&p) {
+                        for (idx, line) in txt.lines().enumerate() {
+                            if line.to_lowercase().contains(pat) {
+                                out.push(format!("{vpath}:{}: {}", idx + 1, line.trim()));
+                                if out.len() >= 120 {
+                                    return;
+                                }
                             }
                         }
                     }
@@ -784,7 +730,7 @@ fn walk_search(root: &Path, prefix: &str, pattern: Option<&str>, out: &mut Vec<S
             }
         }
     }
-    rec(root, root, prefix, pattern, out);
+    rec(root, root, prefix, pattern, out, 0);
 }
 
 struct A2uiSurfaceTool;
@@ -1008,8 +954,6 @@ impl AgentTool for FridgePostNoteTool {
             let color = args.get("color").and_then(|v| v.as_str()).unwrap_or("oat");
             let pinned = args.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false);
 
-            let mut board: BoardDoc =
-                read_space_module(&ctx.state, ctx.space_id, dim::MOD_BOARD).await;
             let note = BoardNote {
                 id: ctx.state.snowflake.next_id(),
                 uid: ctx.user_id,
@@ -1020,9 +964,18 @@ impl AgentTool for FridgePostNoteTool {
                 locked: false,
                 at: now_ms(),
             };
-            board.notes.insert(0, note.clone());
-            board.notes.truncate(50);
-            write_space_module(&ctx.state, ctx.space_id, dim::MOD_BOARD, &board).await?;
+            let note_clone = note.clone();
+            mutate_space_module::<BoardDoc, _, _>(
+                &ctx.state,
+                ctx.space_id,
+                dim::MOD_BOARD,
+                move |board| {
+                    board.notes.insert(0, note_clone);
+                    board.notes.truncate(50);
+                    Ok(())
+                },
+            )
+            .await?;
 
             ctx.state
                 .hub
@@ -1063,68 +1016,73 @@ impl AgentTool for FridgeManageTodoTool {
     }
     fn run<'a>(&'a self, ctx: &'a ToolExecContext, args: Value) -> BoxFuture<'a, Result<ToolExecOutput, String>> {
         Box::pin(async move {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("add");
-            let mut board: BoardDoc =
-                read_space_module(&ctx.state, ctx.space_id, dim::MOD_BOARD).await;
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("add").to_string();
             let now = now_ms();
+            let new_todo_id = ctx.state.snowflake.next_id();
+            let actor_uid = ctx.user_id;
 
-            let msg = match action {
-                "add" => {
-                    let txt = args
-                        .get("text")
-                        .and_then(|v| v.as_str())
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .ok_or_else(|| "新增待办需要 `text`".to_string())?;
-                    let cat = args
-                        .get("category")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("日常")
-                        .to_string();
-                    board.todos.insert(
-                        0,
-                        BoardTodo {
-                            id: ctx.state.snowflake.next_id(),
-                            text: txt.chars().take(140).collect(),
-                            category: Some(cat),
-                            done: false,
-                            done_by: None,
-                            done_at: None,
-                            at: now,
-                        },
-                    );
-                    format!("已添加待办：「{txt}」")
-                }
-                "complete" | "restore" => {
-                    let want_done = action == "complete";
-                    let tid = args.get("todo_id").and_then(|v| v.as_str());
-                    let kw = args.get("text").and_then(|v| v.as_str()).map(str::trim);
-                    let target = board
-                        .todos
-                        .iter_mut()
-                        .find(|t| {
-                            if let Some(id_str) = tid {
-                                t.id.to_string() == id_str
-                            } else if let Some(k) = kw {
-                                t.done != want_done && t.text.contains(k)
-                            } else {
-                                false
-                            }
-                        })
-                        .ok_or_else(|| "未找到匹配的待办事项".to_string())?;
-                    target.done = want_done;
-                    target.done_by = if want_done { Some(ctx.user_id) } else { None };
-                    target.done_at = if want_done { Some(now) } else { None };
-                    format!(
-                        "已将待办「{}」{}",
-                        target.text,
-                        if want_done { "标记完成并归档" } else { "从归档恢复" }
-                    )
-                }
-                _ => return Err("不支持的待办操作".to_string()),
-            };
+            let msg = mutate_space_module::<BoardDoc, _, _>(
+                &ctx.state,
+                ctx.space_id,
+                dim::MOD_BOARD,
+                move |board| match action.as_str() {
+                    "add" => {
+                        let txt = args
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .ok_or_else(|| "新增待办需要 `text`".to_string())?;
+                        let cat = args
+                            .get("category")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("日常")
+                            .to_string();
+                        board.todos.insert(
+                            0,
+                            BoardTodo {
+                                id: new_todo_id,
+                                text: txt.chars().take(140).collect(),
+                                category: Some(cat),
+                                done: false,
+                                done_by: None,
+                                done_at: None,
+                                at: now,
+                            },
+                        );
+                        Ok(format!("已添加待办：「{txt}」"))
+                    }
+                    "complete" | "restore" => {
+                        let want_done = action == "complete";
+                        let tid = args.get("todo_id").and_then(|v| v.as_str());
+                        let kw = args.get("text").and_then(|v| v.as_str()).map(str::trim);
+                        let target = board
+                            .todos
+                            .iter_mut()
+                            .find(|t| {
+                                if let Some(id_str) = tid {
+                                    t.id.to_string() == id_str
+                                } else if let Some(k) = kw {
+                                    t.done != want_done && t.text.contains(k)
+                                } else {
+                                    false
+                                }
+                            })
+                            .ok_or_else(|| "未找到匹配的待办事项".to_string())?;
+                        target.done = want_done;
+                        target.done_by = if want_done { Some(actor_uid) } else { None };
+                        target.done_at = if want_done { Some(now) } else { None };
+                        Ok(format!(
+                            "已将待办「{}」{}",
+                            target.text,
+                            if want_done { "标记完成并归档" } else { "从归档恢复" }
+                        ))
+                    }
+                    _ => Err("不支持的待办操作".to_string()),
+                },
+            )
+            .await?;
 
-            write_space_module(&ctx.state, ctx.space_id, dim::MOD_BOARD, &board).await?;
             ctx.state
                 .hub
                 .publish(ctx.space_id, "BOARD_UPDATED", json!({ "by_agent": true }))
@@ -1184,8 +1142,9 @@ impl AgentTool for FridgePinMenuTool {
                 .take(120)
                 .collect::<String>();
 
+            let mut tx = ctx.state.db.write.begin().await.map_err(|e| e.to_string())?;
             let mut menu_doc: MenuDoc =
-                read_space_module(&ctx.state, ctx.space_id, dim::MOD_MENU).await;
+                read_space_module_in_tx(&mut tx, ctx.space_id, dim::MOD_MENU).await;
             let mut dish_ids = Vec::new();
             let mut menu_dirty = false;
 
@@ -1207,11 +1166,11 @@ impl AgentTool for FridgePinMenuTool {
                 }
             }
             if menu_dirty {
-                write_space_module(&ctx.state, ctx.space_id, dim::MOD_MENU, &menu_doc).await?;
+                write_space_module_in_tx(&mut tx, ctx.space_id, dim::MOD_MENU, &menu_doc).await?;
             }
 
             let mut fridge_doc: FridgeDoc =
-                read_space_module(&ctx.state, ctx.space_id, dim::MOD_FRIDGE).await;
+                read_space_module_in_tx(&mut tx, ctx.space_id, dim::MOD_FRIDGE).await;
             let bj = now_beijing();
             let slip = FridgeSlip {
                 id: ctx.state.snowflake.next_id(),
@@ -1226,7 +1185,8 @@ impl AgentTool for FridgePinMenuTool {
             };
             fridge_doc.recent_slips.insert(0, slip);
             fridge_doc.recent_slips.truncate(5);
-            write_space_module(&ctx.state, ctx.space_id, dim::MOD_FRIDGE, &fridge_doc).await?;
+            write_space_module_in_tx(&mut tx, ctx.space_id, dim::MOD_FRIDGE, &fridge_doc).await?;
+            tx.commit().await.map_err(|e| e.to_string())?;
 
             ctx.state
                 .hub
@@ -1291,27 +1251,35 @@ impl AgentTool for FridgeUpsertDishTool {
                 .unwrap_or_default();
             let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-            let mut menu_doc: MenuDoc =
-                read_space_module(&ctx.state, ctx.space_id, dim::MOD_MENU).await;
-            if let Some(ex) = menu_doc.dishes.iter_mut().find(|d| d.name == name) {
-                ex.category = cat;
-                if !ing.is_empty() {
-                    ex.ingredients = ing;
-                }
-                if !note.is_empty() {
-                    ex.note = note;
-                }
-            } else {
-                menu_doc.dishes.push(MenuDish {
-                    id: ctx.state.snowflake.next_id(),
-                    name: name.to_string(),
-                    category: cat,
-                    cover_asset_id: None,
-                    ingredients: ing,
-                    note,
-                });
-            }
-            write_space_module(&ctx.state, ctx.space_id, dim::MOD_MENU, &menu_doc).await?;
+            let name_owned = name.to_string();
+            let new_dish_id = ctx.state.snowflake.next_id();
+            mutate_space_module::<MenuDoc, _, _>(
+                &ctx.state,
+                ctx.space_id,
+                dim::MOD_MENU,
+                move |menu_doc| {
+                    if let Some(ex) = menu_doc.dishes.iter_mut().find(|d| d.name == name_owned) {
+                        ex.category = cat;
+                        if !ing.is_empty() {
+                            ex.ingredients = ing;
+                        }
+                        if !note.is_empty() {
+                            ex.note = note;
+                        }
+                    } else {
+                        menu_doc.dishes.push(MenuDish {
+                            id: new_dish_id,
+                            name: name_owned,
+                            category: cat,
+                            cover_asset_id: None,
+                            ingredients: ing,
+                            note,
+                        });
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
             ctx.state
                 .hub
                 .publish(ctx.space_id, "FRIDGE_UPDATED", json!({ "by_agent": true }))
@@ -1539,21 +1507,35 @@ impl AgentTool for PetActAndEmoteTool {
                 .map(|s| s.trim().chars().take(36).collect::<String>())
                 .filter(|s| !s.is_empty());
 
-            if let Ok(mut pet) =
-                try_read_space_module::<PetStateDoc>(&ctx.state, ctx.space_id, dim::MOD_PET).await
-            {
-                if pet.adopted {
-                    pet.stats.mood = (pet.stats.mood + 2).min(100);
-                    if let Some(ref b) = bubble {
-                        pet.push_log(PetLogEntry {
-                            uid: ctx.user_id,
-                            action: "AGENT_WHISPER".to_string(),
-                            text: format!("轻声说：「{b}」"),
-                            resonance: false,
-                            at: now_ms(),
-                        });
+            if let Ok(mut tx) = ctx.state.db.write.begin().await {
+                if let Ok(Some(row)) = sqlx::query(
+                    "SELECT data_json FROM space_modules WHERE space_id = ?1 AND module_type_id = ?2",
+                )
+                .bind(ctx.space_id)
+                .bind(dim::MOD_PET)
+                .fetch_optional(&mut *tx)
+                .await
+                {
+                    if let Ok(mut pet) = serde_json::from_str::<PetStateDoc>(row.get("data_json")) {
+                        if pet.adopted {
+                            pet.stats.mood = (pet.stats.mood + 2).min(100);
+                            if let Some(ref b) = bubble {
+                                pet.push_log(PetLogEntry {
+                                    uid: ctx.user_id,
+                                    action: "AGENT_WHISPER".to_string(),
+                                    text: format!("轻声说：「{b}」"),
+                                    resonance: false,
+                                    at: now_ms(),
+                                });
+                            }
+                            if write_space_module_in_tx(&mut tx, ctx.space_id, dim::MOD_PET, &pet)
+                                .await
+                                .is_ok()
+                            {
+                                let _ = tx.commit().await;
+                            }
+                        }
                     }
-                    let _ = write_space_module(&ctx.state, ctx.space_id, dim::MOD_PET, &pet).await;
                 }
             }
 
@@ -1807,8 +1789,26 @@ async fn read_space_module<T: serde::de::DeserializeOwned + Default>(
         .unwrap_or_default()
 }
 
-async fn write_space_module<T: serde::Serialize>(
-    state: &AppState,
+async fn read_space_module_in_tx<T: serde::de::DeserializeOwned + Default>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    space_id: i64,
+    module_type_id: i64,
+) -> T {
+    let Ok(Some(row)) = sqlx::query(
+        "SELECT data_json FROM space_modules WHERE space_id = ?1 AND module_type_id = ?2",
+    )
+    .bind(space_id)
+    .bind(module_type_id)
+    .fetch_optional(&mut **tx)
+    .await
+    else {
+        return T::default();
+    };
+    serde_json::from_str(row.get("data_json")).unwrap_or_default()
+}
+
+async fn write_space_module_in_tx<T: serde::Serialize>(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     space_id: i64,
     module_type_id: i64,
     doc: &T,
@@ -1823,8 +1823,26 @@ async fn write_space_module<T: serde::Serialize>(
     .bind(now_ms())
     .bind(space_id)
     .bind(module_type_id)
-    .execute(&state.db.write)
+    .execute(&mut **tx)
     .await
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+async fn mutate_space_module<T, R, F>(
+    state: &AppState,
+    space_id: i64,
+    module_type_id: i64,
+    mutator: F,
+) -> Result<R, String>
+where
+    T: serde::de::DeserializeOwned + serde::Serialize + Default,
+    F: FnOnce(&mut T) -> Result<R, String>,
+{
+    let mut tx = state.db.write.begin().await.map_err(|e| e.to_string())?;
+    let mut doc: T = read_space_module_in_tx(&mut tx, space_id, module_type_id).await;
+    let out = mutator(&mut doc)?;
+    write_space_module_in_tx(&mut tx, space_id, module_type_id, &doc).await?;
+    tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(out)
 }

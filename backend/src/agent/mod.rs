@@ -12,11 +12,13 @@ use axum::{
     Json, Router,
 };
 use futures_util::Stream;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_stream::wrappers::ReceiverStream;
@@ -30,17 +32,17 @@ use crate::{
         },
         memory::{
             apply_ltm_git_commit, extract_sealed_session_to_stm, flush_session_to_s3,
-            gc_expired_stm_segments, load_session_turns_from_s3, maybe_roll_compact_session,
-            pop_piggyback_clarification, promote_stm_to_ltm, recall_stm_segments,
-            render_ltm_for_system_prompt, render_scope_ltm_markdown, s3_session_turns_key,
-            sync_scope_ltm_from_markdown, user_scope, LtmCommitDto, LtmDiffOp, SessionMetaDto,
-            SessionTurnRecord, ToolTraceSummary, SESSION_IDLE_SEAL_MS,
+            gc_expired_stm_segments, load_session_turns_from_s3, mark_clarification_asked,
+            maybe_roll_compact_session, peek_piggyback_clarification, promote_stm_to_ltm,
+            recall_stm_segments, render_ltm_for_system_prompt, render_scope_ltm_markdown,
+            s3_session_turns_key, sync_scope_ltm_from_markdown, user_scope, LtmCommitDto,
+            LtmDiffOp, SessionMetaDto, SessionTurnRecord, ToolTraceSummary,
+            LTM_PRIVATE_CHAR_BUDGET, LTM_SHARED_CHAR_BUDGET, SESSION_IDLE_SEAL_MS,
         },
         provider::{
             fetch_live_vendor_models, list_configured_providers, probe_and_cache_provider,
             resolve_vendor_preset, stream_with_failover, LlmMessage, ModelRole,
         },
-        sandbox::VirtualFs,
         tools::{ToolExecContext, ToolRegistry},
     },
     domains::pet::model::PetStateDoc,
@@ -56,7 +58,8 @@ const MAX_HOT_SESSIONS_IN_RAM: usize = 24;
 
 pub struct AgentRuntime {
     pub registry: ToolRegistry,
-    pub hot_sessions: RwLock<HashMap<String, Vec<SessionTurnRecord>>>,
+    pub hot_sessions: RwLock<IndexMap<String, Vec<SessionTurnRecord>>>,
+    pub session_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     pub ltm_commit_lock: Mutex<()>,
 }
 
@@ -70,9 +73,34 @@ impl AgentRuntime {
     pub fn new() -> Self {
         Self {
             registry: ToolRegistry::with_builtin_tools(),
-            hot_sessions: RwLock::new(HashMap::new()),
+            hot_sessions: RwLock::new(IndexMap::new()),
+            session_locks: Mutex::new(HashMap::new()),
             ltm_commit_lock: Mutex::new(()),
         }
+    }
+
+    pub async fn lock_for_session(&self, session_id: &str) -> Arc<Mutex<()>> {
+        let mut map = self.session_locks.lock().await;
+        if map.len() > 256 {
+            map.retain(|_, arc| Arc::strong_count(arc) > 1);
+        }
+        map.entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    pub async fn lock_session(&self, session_id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let sem = self.lock_for_session(session_id).await;
+        sem.lock_owned().await
+    }
+
+    pub async fn put_hot_session(&self, session_id: String, turns: Vec<SessionTurnRecord>) {
+        let mut guard = self.hot_sessions.write().await;
+        guard.shift_remove(&session_id);
+        while guard.len() >= MAX_HOT_SESSIONS_IN_RAM {
+            guard.shift_remove_index(0);
+        }
+        guard.insert(session_id, turns);
     }
 }
 
@@ -169,16 +197,22 @@ async fn seal_session_and_spawn_extract(
     user_id: i64,
     session_id: String,
 ) {
+    let _sess_guard = state.agent.lock_session(&session_id).await;
     let now = now_ms();
-    let _ = sqlx::query(
-        "UPDATE agent_sessions SET status = 'SEALED', sealed_at = ?1 WHERE session_id = ?2",
+    let res = sqlx::query(
+        "UPDATE agent_sessions SET status = 'SEALED', sealed_at = ?1
+         WHERE session_id = ?2 AND status = 'ACTIVE'",
     )
     .bind(now)
     .bind(&session_id)
     .execute(&state.db.write)
     .await;
 
-    let popped = state.agent.hot_sessions.write().await.remove(&session_id);
+    if res.map(|r| r.rows_affected() == 0).unwrap_or(true) {
+        return;
+    }
+
+    let popped = state.agent.hot_sessions.write().await.shift_remove(&session_id);
     if let Some(turns) = popped {
         let _ = flush_session_to_s3(
             &state,
@@ -191,6 +225,7 @@ async fn seal_session_and_spawn_extract(
         )
         .await;
     }
+    drop(_sess_guard);
 
     tokio::spawn(async move {
         let _ = extract_sealed_session_to_stm(&state, space_id, user_id, &session_id).await;
@@ -209,13 +244,10 @@ async fn get_or_hydrate_turns(
     }
     let loaded = load_session_turns_from_s3(state, space_id, user_id, session_id).await;
     if !loaded.is_empty() {
-        let mut guard = state.agent.hot_sessions.write().await;
-        if guard.len() >= MAX_HOT_SESSIONS_IN_RAM {
-            if let Some(first_k) = guard.keys().next().cloned() {
-                guard.remove(&first_k);
-            }
-        }
-        guard.insert(session_id.to_string(), loaded.clone());
+        state
+            .agent
+            .put_hot_session(session_id.to_string(), loaded.clone())
+            .await;
     }
     loaded
 }
@@ -367,11 +399,14 @@ async fn chat_stream_handler(
         None => ensure_or_load_active_session(&state, guard.space_id, guard.user_id).await?,
     };
 
-    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(512);
+    let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(2048);
     let space_id = guard.space_id;
     let user_id = guard.user_id;
 
     tokio::spawn(async move {
+        let sess_lock = state.agent.lock_for_session(&session_id).await;
+        let _turn_guard = sess_lock.lock().await;
+
         let emit = |tx: &mpsc::Sender<Result<Event, Infallible>>, kind: &str, payload: Value| {
             let tx = tx.clone();
             let kind = kind.to_string();
@@ -388,8 +423,17 @@ async fn chat_stream_handler(
         )
         .await;
 
-        let mut turns = get_or_hydrate_turns(&state, space_id, user_id, &session_id).await;
         let now = now_ms();
+        // Touch `last_active_at` right away so background maintenance never seals a mid-stream session!
+        let _ = sqlx::query(
+            "UPDATE agent_sessions SET status = 'ACTIVE', last_active_at = ?1 WHERE session_id = ?2",
+        )
+        .bind(now)
+        .bind(&session_id)
+        .execute(&state.db.write)
+        .await;
+
+        let mut turns = get_or_hydrate_turns(&state, space_id, user_id, &session_id).await;
 
         // Handle closed-loop A2UI `userAction` update on existing surface if applicable
         let (user_prompt_text, ui_summary) = if let Some(ref act) = req.ui_action {
@@ -400,12 +444,13 @@ async fn chat_stream_handler(
                     serde_json::to_string(&act.data_model).unwrap_or_default()
                 )
             });
-            for prev_t in turns.iter_mut().rev() {
-                for surf in &mut prev_t.surfaces {
+            'surface_scan: for prev_t in turns.iter_mut().rev() {
+                for surf in prev_t.surfaces.iter_mut().rev() {
                     if surf.surface_id == act.surface_id {
                         surf.data_model = act.data_model.clone();
                         surf.submitted = true;
                         surf.submitted_summary = Some(summary.clone());
+                        break 'surface_scan;
                     }
                 }
             }
@@ -444,11 +489,12 @@ async fn chat_stream_handler(
         };
         turns.push(user_turn);
 
-        // Auto-title session on first user turn
+        // Auto-title session on first user turn & read rolling compaction cursor
         let mut session_title = "与伙伴的私语".to_string();
         let mut rolling_summary = String::new();
+        let mut compacted_turn_count = 0usize;
         if let Ok(Some(srow)) = sqlx::query(
-            "SELECT title, rolling_summary FROM agent_sessions WHERE session_id = ?1",
+            "SELECT title, rolling_summary, compacted_turn_count FROM agent_sessions WHERE session_id = ?1",
         )
         .bind(&session_id)
         .fetch_optional(&state.db.read)
@@ -456,20 +502,14 @@ async fn chat_stream_handler(
         {
             session_title = srow.get("title");
             rolling_summary = srow.get("rolling_summary");
+            compacted_turn_count = srow
+                .try_get::<i64, _>("compacted_turn_count")
+                .unwrap_or(0)
+                .max(0) as usize;
         }
         if turns.len() <= 2 && !req.text.trim().is_empty() {
             session_title = req.text.trim().chars().take(18).collect();
         }
-
-        // Rolling compaction for long chats (NEVER cuts session at 40 turns!)
-        rolling_summary = maybe_roll_compact_session(
-            &state,
-            space_id,
-            &session_id,
-            &rolling_summary,
-            &turns,
-        )
-        .await;
 
         // 1. Static System Persona + 2. Long-Term Memory HEAD right behind System Prompt
         let system_static = build_pet_system_prompt(&state, space_id, user_id).await;
@@ -478,7 +518,7 @@ async fn chat_stream_handler(
         // 3. Dynamic 7-Day Short-Term Memory Recall (BM25 + Time Decay + MMR) + Piggyback Clarification
         let stm_hits = recall_stm_segments(&state, space_id, user_id, &user_prompt_text, 4).await;
         let clarify_opt = if req.ui_action.is_none() {
-            pop_piggyback_clarification(&state, space_id, user_id).await
+            peek_piggyback_clarification(&state, space_id, user_id).await
         } else {
             None
         };
@@ -499,7 +539,7 @@ async fn chat_stream_handler(
             for h in &stm_hits {
                 dyn_ctx.push_str(&format!("- [近期片段/{}]: {}\n", h.scope, h.summary_text));
             }
-            if let Some((cid, q_hint)) = clarify_opt {
+            if let Some((cid, ref q_hint)) = clarify_opt {
                 dyn_ctx.push_str(&format!(
                     "\n[顺嘴确认提示 (id={cid})]: 如果当前聊天氛围自然轻松，可在回复末尾顺带自然问一句（或发一个轻量 A2UI 选择卡）：「{q_hint}」；若当前话题严肃则忽略。\n"
                 ));
@@ -512,8 +552,11 @@ async fn chat_stream_handler(
             });
         }
 
+        // Feed all uncompacted turns since `compacted_turn_count` (bounded by 48 turns if running without external LLM compaction)
         let hist_len = turns.len().saturating_sub(1);
-        let window_start = hist_len.saturating_sub(16);
+        let window_start = compacted_turn_count
+            .min(hist_len)
+            .max(hist_len.saturating_sub(48));
         for t in &turns[window_start..hist_len] {
             if t.role == "user" {
                 llm_msgs.push(LlmMessage::User {
@@ -530,25 +573,12 @@ async fn chat_stream_handler(
             content: user_prompt_text,
         });
 
-        let vfs = match VirtualFs::ensure_for(&state.cfg.agent_fs_dir, space_id, user_id).await {
-            Ok(v) => v,
-            Err(e) => {
-                emit(&tx, "error", json!({ "message": e })).await;
-                return;
-            }
-        };
-
-        let exec_ctx = std::sync::Arc::new(ToolExecContext {
-            state: state.clone(),
+        let exec_ctx = Arc::new(ToolExecContext::new(
+            state.clone(),
             space_id,
             user_id,
-            session_id: session_id.clone(),
-            vfs,
-        });
-        state
-            .agent
-            .registry
-            .install_into_kernel_bridge(std::sync::Arc::clone(&exec_ctx));
+            session_id.clone(),
+        ));
         let static_tools = state.agent.registry.always_loaded_specs();
 
         let mut collected_traces: Vec<ToolTraceSummary> = Vec::new();
@@ -557,13 +587,17 @@ async fn chat_stream_handler(
         let mut streamed_live_chars: usize = 0;
         let mut seen_calls: HashMap<String, usize> = HashMap::new();
         let mut needs_final_synthesis = false;
+        let mut provider_errored = false;
 
         for round in 0..MAX_TOOL_ROUNDS {
+            if tx.is_closed() {
+                return;
+            }
             let tx_stream = tx.clone();
             let need_sep = !final_text.trim().is_empty();
             let mut emitted_sep = false;
             let mut round_live_chars = 0usize;
-            let comp = match stream_with_failover(
+            let sample_fut = stream_with_failover(
                 &state,
                 space_id,
                 ModelRole::Chat,
@@ -581,16 +615,22 @@ async fn chat_stream_handler(
                     let payload = serde_json::to_string(&json!({ "delta": delta })).unwrap_or_default();
                     let _ = tx_stream.try_send(Ok(Event::default().event("text_delta").data(payload)));
                 },
-            )
-            .await
-            {
-                Ok(c) => {
-                    streamed_live_chars += round_live_chars;
-                    c
+            );
+
+            let comp = tokio::select! {
+                _ = tx.closed() => {
+                    return;
                 }
-                Err(e) => {
-                    final_text = format!("呜…连接模型供应商时打了个喷嚏：{e}");
-                    break;
+                res = sample_fut => match res {
+                    Ok(c) => {
+                        streamed_live_chars += round_live_chars;
+                        c
+                    }
+                    Err(e) => {
+                        provider_errored = true;
+                        final_text = format!("呜…连接模型供应商时打了个喷嚏：{e}");
+                        break;
+                    }
                 }
             };
 
@@ -752,11 +792,12 @@ async fn chat_stream_handler(
         let asst_turn_id = asst_turn.turn_id.clone();
         turns.push(asst_turn);
 
-        // Update hot RAM cache & flush atomically to S3!
-        {
-            let mut guard = state.agent.hot_sessions.write().await;
-            guard.insert(session_id.clone(), turns.clone());
-        }
+        // Update bounded hot RAM cache & flush atomically to S3!
+        state
+            .agent
+            .put_hot_session(session_id.clone(), turns.clone())
+            .await;
+
         let _ = sqlx::query(
             "UPDATE agent_sessions
              SET title = ?1, turn_count = ?2, status = 'ACTIVE', last_active_at = ?3
@@ -780,6 +821,12 @@ async fn chat_stream_handler(
         )
         .await;
 
+        if !provider_errored {
+            if let Some((cid, _)) = clarify_opt {
+                mark_clarification_asked(&state, cid).await;
+            }
+        }
+
         emit(
             &tx,
             "turn_done",
@@ -792,6 +839,27 @@ async fn chat_stream_handler(
             }),
         )
         .await;
+
+        drop(_turn_guard);
+
+        // Run cursor-based rolling compaction asynchronously AFTER `turn_done` so TTFB is 0ms blocked!
+        if !provider_errored {
+            let state_bg = state.clone();
+            let sid_bg = session_id.clone();
+            tokio::spawn(async move {
+                let lock = state_bg.agent.lock_for_session(&sid_bg).await;
+                let _g = lock.lock().await;
+                let _ = maybe_roll_compact_session(
+                    &state_bg,
+                    space_id,
+                    &sid_bg,
+                    &rolling_summary,
+                    compacted_turn_count,
+                    &turns,
+                )
+                .await;
+            });
+        }
     });
 
     Ok(Sse::new(ReceiverStream::new(rx)).keep_alive(
@@ -1033,9 +1101,6 @@ async fn put_memory_markdown_handler(
     State(state): State<AppState>,
     Json(req): Json<UpdateMemoryMarkdownReq>,
 ) -> AppResult<Json<Value>> {
-    if req.markdown.len() > 24_000 {
-        return Err(AppError::BadRequest("记忆文档单页不超过 24,000 字符".to_string()));
-    }
     let resolved_scope = match req.scope.trim() {
         "shared" => "shared".to_string(),
         "private" => user_scope(guard.user_id),
@@ -1045,6 +1110,17 @@ async fn put_memory_markdown_handler(
             ))
         }
     };
+
+    let max_chars = if resolved_scope == "shared" {
+        LTM_SHARED_CHAR_BUDGET + 600
+    } else {
+        LTM_PRIVATE_CHAR_BUDGET + 500
+    };
+    if req.markdown.chars().count() > max_chars {
+        return Err(AppError::BadRequest(format!(
+            "当前记忆文档超出容量预算（上限约 {max_chars} 字），请适当精简后再保存"
+        )));
+    }
 
     let commit = sync_scope_ltm_from_markdown(
         &state,
@@ -1273,16 +1349,27 @@ async fn upsert_provider_handler(
         format!("prov_{}", state.snowflake.next_id())
     };
 
-    // Preserve existing key if UI sent back masked placeholder `••••` or empty when toggling an existing provider
+    // Preserve existing key ONLY if `base_url` and `protocol` did NOT change (prevents masked-key exfiltration!)
     let final_key = if req.api_key.contains("••••") || req.api_key.trim().is_empty() {
-        sqlx::query_scalar::<_, String>(
-            "SELECT api_key FROM agent_providers WHERE id = ?1 AND space_id = ?2",
+        let existing_row = sqlx::query(
+            "SELECT api_key, base_url, protocol FROM agent_providers WHERE id = ?1 AND space_id = ?2",
         )
         .bind(&pid)
         .bind(guard.space_id)
         .fetch_optional(&state.db.read)
         .await?
-        .ok_or_else(|| AppError::BadRequest("首次启用请填入真实 API Token".to_string()))?
+        .ok_or_else(|| AppError::BadRequest("首次启用请填入真实 API Token".to_string()))?;
+
+        let old_url: String = existing_row.get("base_url");
+        let old_proto: String = existing_row.get("protocol");
+        if old_url.trim_end_matches('/') != effective_base_url.trim_end_matches('/')
+            || !old_proto.eq_ignore_ascii_case(&effective_proto)
+        {
+            return Err(AppError::BadRequest(
+                "修改供应商网关地址或协议时，请重新填写完整的 API Token".to_string(),
+            ));
+        }
+        existing_row.get::<String, _>("api_key")
     } else {
         req.api_key.trim().to_string()
     };
@@ -1302,7 +1389,7 @@ async fn upsert_provider_handler(
             .await;
     }
 
-    sqlx::query(
+    let upserted = sqlx::query(
         "INSERT INTO agent_providers
          (id, space_id, name, protocol, base_url, api_key, chat_model, memory_model, is_chat_primary, is_memory_primary, enabled, priority, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -1317,7 +1404,8 @@ async fn upsert_provider_handler(
             is_memory_primary = excluded.is_memory_primary,
             enabled = excluded.enabled,
             priority = excluded.priority,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at
+         WHERE agent_providers.space_id = excluded.space_id AND agent_providers.space_id != 0",
     )
     .bind(&pid)
     .bind(guard.space_id)
@@ -1334,6 +1422,12 @@ async fn upsert_provider_handler(
     .bind(now_ms())
     .execute(&state.db.write)
     .await?;
+
+    if upserted.rows_affected() == 0 {
+        return Err(AppError::Forbidden(
+            "无权覆盖其他空间或全局预设供应商配置".to_string(),
+        ));
+    }
 
     if req.enabled {
         probe_and_cache_provider(&state, guard.space_id, &pid).await;
@@ -1466,7 +1560,12 @@ async fn get_mcp_handler(
     guard: SpaceGuard,
     State(state): State<AppState>,
 ) -> AppResult<Json<Value>> {
-    let servers = load_mcp_servers(&state, guard.space_id).await;
+    let mut servers = load_mcp_servers(&state, guard.space_id).await;
+    for srv in &mut servers {
+        for val in srv.headers.values_mut() {
+            *val = mask_secret(val);
+        }
+    }
     Ok(Json(json!({ "mcp_servers": servers })))
 }
 
@@ -1475,12 +1574,59 @@ async fn upsert_mcp_handler(
     State(state): State<AppState>,
     Json(req): Json<McpServerConfigDto>,
 ) -> AppResult<Json<Value>> {
+    let ep_trimmed = req.endpoint.trim();
+    let tr_trimmed = req.transport.trim();
+    let is_stdio = tr_trimmed.eq_ignore_ascii_case("stdio")
+        || (!ep_trimmed.starts_with("http://") && !ep_trimmed.starts_with("https://"));
+
+    if is_stdio && !guard.is_owner() {
+        return Err(AppError::Forbidden(
+            "仅空间主理人可配置本地命令类 (stdio) MCP 扩展".to_string(),
+        ));
+    }
+
     let mid = if req.id.trim().is_empty() {
         format!("mcp_{}", state.snowflake.next_id())
     } else {
         req.id.trim().to_string()
     };
-    sqlx::query(
+
+    let mut merged_headers = req.headers.clone();
+    if merged_headers.values().any(|v| v.contains("••••")) {
+        let existing_row = sqlx::query(
+            "SELECT transport, endpoint, headers_json FROM agent_mcp_servers WHERE id = ?1 AND space_id = ?2",
+        )
+        .bind(&mid)
+        .bind(guard.space_id)
+        .fetch_optional(&state.db.read)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("首次保存 MCP 请填写完整认证密钥".to_string()))?;
+
+        let old_ep: String = existing_row.get("endpoint");
+        let old_tr: String = existing_row.get("transport");
+        if old_ep.trim_end_matches('/') != ep_trimmed.trim_end_matches('/')
+            || !old_tr.eq_ignore_ascii_case(tr_trimmed)
+        {
+            return Err(AppError::BadRequest(
+                "修改 MCP 服务地址或传输方式时，请重新填写认证密钥".to_string(),
+            ));
+        }
+        let stored_hdrs: HashMap<String, String> =
+            serde_json::from_str(existing_row.get("headers_json")).unwrap_or_default();
+        for (k, v) in &mut merged_headers {
+            if v.contains("••••") {
+                if let Some(orig) = stored_hdrs.get(k) {
+                    *v = orig.clone();
+                } else {
+                    return Err(AppError::BadRequest(format!(
+                        "字段 `{k}` 包含掩码占位符，请重新填写完整值"
+                    )));
+                }
+            }
+        }
+    }
+
+    let upserted = sqlx::query(
         "INSERT INTO agent_mcp_servers
          (id, space_id, name, description, transport, endpoint, args_json, headers_json, enabled, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
@@ -1492,20 +1638,27 @@ async fn upsert_mcp_handler(
             args_json = excluded.args_json,
             headers_json = excluded.headers_json,
             enabled = excluded.enabled,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at
+         WHERE agent_mcp_servers.space_id = excluded.space_id AND agent_mcp_servers.space_id != 0",
     )
     .bind(&mid)
     .bind(guard.space_id)
     .bind(req.name.trim())
     .bind(req.description.trim())
-    .bind(req.transport.trim())
-    .bind(req.endpoint.trim())
+    .bind(tr_trimmed)
+    .bind(ep_trimmed)
     .bind(serde_json::to_string(&req.args).unwrap_or_else(|_| "[]".into()))
-    .bind(serde_json::to_string(&req.headers).unwrap_or_else(|_| "{}".into()))
+    .bind(serde_json::to_string(&merged_headers).unwrap_or_else(|_| "{}".into()))
     .bind(if req.enabled { 1 } else { 0 })
     .bind(now_ms())
     .execute(&state.db.write)
     .await?;
+
+    if upserted.rows_affected() == 0 {
+        return Err(AppError::Forbidden(
+            "无权覆盖其他空间或全局 MCP 服务配置".to_string(),
+        ));
+    }
     invalidate_mcp_cache(guard.space_id, Some(&mid));
     state
         .hub

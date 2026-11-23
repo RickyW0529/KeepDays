@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1.7
 # =============================================================================
-# KeepDays Cross-Platform Debian 13 (Trixie) Production Artifact Builder
+# KeepDays Fast Native Cross-Compiler for Debian 13 (Trixie) Production Release
 #
-# Usage from macOS (Apple Silicon -> Vultr x86_64 or arm64):
-#   docker buildx build --platform linux/amd64 \
-#     -f deploy/Dockerfile.builder \
-#     --output type=local,dest=./deploy/out/amd64 .
+# Runs `rustc` natively on $BUILDPLATFORM (e.g. Apple Silicon arm64 at 100% M-chip speed!)
+# targeting Debian 13 `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`,
+# then verifies `ldd` & `--self-check` inside real target-arch `debian:trixie-slim`.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Stage 1: Frontend Static Builder (Node 22)
+# Stage 1: Frontend Static Builder (Native $BUILDPLATFORM Node 22)
 # -----------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS frontend-builder
 WORKDIR /build/frontend
@@ -17,36 +16,60 @@ COPY frontend/ ./
 
 RUN if [ -f package-lock.json ]; then \
       npm ci --no-audit --no-fund && npm run build; \
-    elif [ -f package.json ]; then \
-      npm install --no-audit --no-fund && npm run build; \
     else \
-      mkdir -p dist && \
-      printf '<!doctype html><html><head><meta charset="utf-8"><title>KeepDays</title></head><body><div id="root">KeepDays API Ready</div></body></html>' > dist/index.html; \
+      npm install --no-audit --no-fund && npm run build; \
     fi
 
 # -----------------------------------------------------------------------------
-# Stage 2: Rust Release Builder on Debian GNU/Linux 13 (Trixie)
-# Compiles `keepdays-server` unified with `agent-kernel`
+# Stage 2: Native $BUILDPLATFORM Rust Release Builder on Debian 13 (Trixie)
 # -----------------------------------------------------------------------------
-FROM rust:1-slim-trixie AS rust-builder
+FROM --platform=$BUILDPLATFORM rust:1-slim-trixie AS rust-builder
+ARG TARGETARCH
 WORKDIR /build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config build-essential cmake git ca-certificates \
+# Force HTTPS on Debian sources + retries to avoid plain-HTTP proxy 502s
+RUN sed -i 's|http://|https://|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true && \
+    apt-get -o Acquire::Retries=5 update && \
+    apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+      pkg-config build-essential cmake git ca-certificates \
+      gcc-x86-64-linux-gnu g++-x86-64-linux-gnu libc6-dev-amd64-cross \
+      gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross \
     && rm -rf /var/lib/apt/lists/*
+
+RUN rustup target add x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu
+
+ENV CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+    CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++ \
+    AR_x86_64_unknown_linux_gnu=x86_64-linux-gnu-ar \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CARGO_NET_RETRY=5
 
 COPY agent-kernel ./agent-kernel
 COPY backend ./backend
 
 WORKDIR /build/backend
-RUN cargo build --release --bin keepdays-server
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/agent-kernel/target,id=keepdays-cargo-target-${TARGETARCH} \
+    set -eux; \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+      RUST_TARGET="aarch64-unknown-linux-gnu"; \
+    else \
+      RUST_TARGET="x86_64-unknown-linux-gnu"; \
+    fi; \
+    cargo build --release --target "${RUST_TARGET}" --bin keepdays-server && \
+    cp "/build/agent-kernel/target/${RUST_TARGET}/release/keepdays-server" /build/keepdays-server-bin
 
 # -----------------------------------------------------------------------------
-# Stage 3: Debian 13 (Trixie) Clean Runtime Verification
+# Stage 3: Target-Arch Debian 13 (Trixie) Clean Runtime Verification
 # Verifies glibc symbols (`ldd`) & runs `--self-check` on target CPU architecture
 # -----------------------------------------------------------------------------
 FROM debian:trixie-slim AS trixie-verifier
-COPY --from=rust-builder /build/agent-kernel/target/release/keepdays-server /verify/keepdays-server
+COPY --from=rust-builder /build/keepdays-server-bin /verify/keepdays-server
 RUN chmod +x /verify/keepdays-server && \
     echo "=== Verifying shared library links on Debian 13 (Trixie) ===" && \
     ldd /verify/keepdays-server && \

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowDown,
+  ArrowUp,
   Check,
   ChevronDown,
   Coffee,
@@ -10,9 +11,7 @@ import {
   History,
   Loader2,
   Package,
-  PawPrint,
   Plus,
-  Send,
   ShoppingBag,
   Sparkles,
   Utensils,
@@ -81,11 +80,11 @@ const ChatMarkdown: React.FC<{ text: string; streaming?: boolean }> = ({
   })();
 
   const cursor = streaming ? (
-    <span className="inline-block w-[5px] h-3.5 ml-0.5 align-[-2px] rounded-[1px] bg-accent/85 animate-pulse" />
+    <span className="inline-block w-[5px] h-4 ml-0.5 align-[-3px] rounded-[1px] bg-accent/85 animate-pulse" />
   ) : null;
 
   return (
-    <div className="space-y-1 text-xs text-ink leading-relaxed break-words">
+    <div className="space-y-2 text-[13.5px] text-ink leading-[1.72] break-words">
       {lines.map((raw, idx) => {
         const trimmed = raw.trim();
         const isTail = idx === lastNonEmptyIdx;
@@ -94,7 +93,7 @@ const ChatMarkdown: React.FC<{ text: string; streaming?: boolean }> = ({
         }
         if (/^#{1,3}\s+/.test(trimmed)) {
           return (
-            <div key={idx} className="font-semibold text-ink pt-1">
+            <div key={idx} className="font-semibold text-[14px] text-ink pt-1.5">
               {renderInlineMarkdown(trimmed.replace(/^#{1,3}\s+/, ''))}
               {isTail && cursor}
             </div>
@@ -103,8 +102,8 @@ const ChatMarkdown: React.FC<{ text: string; streaming?: boolean }> = ({
         const bulletMatch = trimmed.match(/^[-*•]\s+(.+)$/);
         if (bulletMatch) {
           return (
-            <div key={idx} className="flex items-baseline gap-1.5 pl-0.5">
-              <span className="w-1 h-1 rounded-full bg-accent/80 shrink-0 translate-y-[-3px]" />
+            <div key={idx} className="flex items-baseline gap-2 pl-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent/75 shrink-0 translate-y-[-2px]" />
               <span className="flex-1 min-w-0">
                 {renderInlineMarkdown(bulletMatch[1])}
                 {isTail && cursor}
@@ -115,8 +114,8 @@ const ChatMarkdown: React.FC<{ text: string; streaming?: boolean }> = ({
         const numMatch = trimmed.match(/^(\d+[.)、])\s*(.+)$/);
         if (numMatch) {
           return (
-            <div key={idx} className="flex items-baseline gap-1.5 pl-0.5">
-              <span className="text-[11px] text-muted tabular-nums shrink-0">{numMatch[1]}</span>
+            <div key={idx} className="flex items-baseline gap-2 pl-0.5">
+              <span className="text-xs text-muted tabular-nums shrink-0">{numMatch[1]}</span>
               <span className="flex-1 min-w-0">
                 {renderInlineMarkdown(numMatch[2])}
                 {isTail && cursor}
@@ -135,7 +134,10 @@ const ChatMarkdown: React.FC<{ text: string; streaming?: boolean }> = ({
   );
 };
 
-/** Unified Assistant Bubble: merges collapsible tool trace header + A2UI surfaces + thinking/reply body into ONE cohesive bubble */
+/**
+ * Minimalist Editorial Assistant Turn (Zero Outer Box!):
+ * Flows openly on the canvas — subtle inline collapsible trace line, single-layer A2UI widget card, and airy Markdown prose.
+ */
 const AssistantReplyBubble: React.FC<{
   petName: string;
   text: string;
@@ -170,12 +172,11 @@ const AssistantReplyBubble: React.FC<{
     return null;
   }
 
-  // Header label when tools exist: seamlessly absorbs "歪头思考中…" before text arrives so there are NEVER two separate boxes!
   const traceHeadline = hasTraces
     ? running
       ? running.summary
       : waitingForFirstToken
-        ? `${traces.length === 1 ? latest.summary : `已联动 ${traces.length} 项感知`} · 歪头思考中…`
+        ? `${traces.length === 1 ? latest.summary : `已联动 ${traces.length} 项感知`} · 思考中…`
         : traces.length === 1
           ? latest.summary
           : `已联动 ${traces.length} 项感知 · ${latest.summary}`
@@ -184,27 +185,25 @@ const AssistantReplyBubble: React.FC<{
   const showSpinnerInHeader = Boolean(running || waitingForFirstToken);
 
   return (
-    <div className="w-fit max-w-[90%] rounded-card rounded-bl-slip bg-surface border border-border text-ink overflow-hidden">
+    <div className="w-full space-y-2.5 text-ink">
       {hasTraces && (
-        <div className={hasText || hasSurfaces ? 'bg-overlay/35' : ''}>
+        <div className="space-y-1.5">
           <button
             type="button"
             onClick={() => canExpand && setExpanded((v) => !v)}
-            className={`w-full px-3.5 py-2 flex items-center justify-between gap-2 text-[11px] text-muted text-left transition-colors ${
+            className={`max-w-full inline-flex items-center gap-1.5 py-0.5 text-xs text-muted transition-colors ${
               canExpand ? 'hover:text-ink cursor-pointer' : 'cursor-default'
             }`}
           >
-            <span className="inline-flex items-center gap-1.5 min-w-0">
-              {showSpinnerInHeader ? (
-                <Loader2 className="w-3 h-3 text-accent animate-spin shrink-0" />
-              ) : (
-                <Wrench className="w-2.5 h-2.5 text-accent/85 shrink-0" />
-              )}
-              <span className="truncate">{traceHeadline}</span>
-            </span>
+            {showSpinnerInHeader ? (
+              <Loader2 className="w-3.5 h-3.5 text-accent animate-spin shrink-0" />
+            ) : (
+              <Wrench className="w-3 h-3 text-subtle shrink-0" />
+            )}
+            <span className="truncate">{traceHeadline}</span>
             {canExpand && (
               <ChevronDown
-                className={`w-3 h-3 text-subtle shrink-0 transition-transform ${
+                className={`w-3.5 h-3.5 text-subtle shrink-0 transition-transform ${
                   expanded ? 'rotate-180' : ''
                 }`}
               />
@@ -212,11 +211,11 @@ const AssistantReplyBubble: React.FC<{
           </button>
 
           {expanded && canExpand && (
-            <div className="px-3.5 pb-2.5 pt-1.5 border-t border-border/55 space-y-1 bg-overlay/20">
+            <div className="ml-1.5 pl-3 border-l border-border space-y-1 py-0.5">
               {traces.map((tr) => (
                 <div
                   key={tr.call_id}
-                  className="flex items-center gap-1.5 text-[10px] text-muted leading-snug"
+                  className="flex items-center gap-1.5 text-[11px] text-muted leading-snug"
                 >
                   {tr.summary.startsWith('正在') ? (
                     <Loader2 className="w-2.5 h-2.5 text-accent animate-spin shrink-0" />
@@ -234,9 +233,7 @@ const AssistantReplyBubble: React.FC<{
       )}
 
       {hasSurfaces && (
-        <div
-          className={`p-2.5 space-y-2 ${hasTraces ? 'border-t border-border/65' : ''}`}
-        >
+        <div className="w-full space-y-2.5">
           {surfaces.map((surf) => (
             <A2uiSurfaceRenderer
               key={surf.surface_id}
@@ -250,24 +247,16 @@ const AssistantReplyBubble: React.FC<{
       )}
 
       {hasText ? (
-        <div
-          className={`px-3.5 py-2.5 ${
-            hasTraces || hasSurfaces ? 'border-t border-border/65' : ''
-          }`}
-        >
+        <div className="pr-2">
           <ChatMarkdown text={text} streaming={streaming} />
         </div>
       ) : !hasTraces && streaming ? (
-        <div
-          className={`px-3.5 py-2.5 text-xs text-muted inline-flex items-center gap-1.5 ${
-            hasSurfaces ? 'border-t border-border/65' : ''
-          }`}
-        >
-          <Loader2 className="w-3 h-3 animate-spin text-accent shrink-0" />
-          <span>歪头思考中…</span>
+        <div className="py-1 text-[13px] text-muted inline-flex items-center gap-2">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-accent shrink-0" />
+          <span>思考中…</span>
         </div>
       ) : !streaming && !hasSurfaces && hasTraces ? (
-        <div className="px-3.5 py-2 border-t border-border/65 text-xs text-muted italic">
+        <div className="text-xs text-muted italic">
           （{petName} 在冰箱顶上冲你眨了眨眼～）
         </div>
       ) : null}
@@ -620,24 +609,24 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
       />
 
       <motion.aside
-        initial={{ x: 28, opacity: 0 }}
+        initial={{ x: 24, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
-        exit={{ x: 28, opacity: 0 }}
+        exit={{ x: 24, opacity: 0 }}
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-        className="pointer-events-auto relative z-10 w-full sm:w-[400px] h-[82dvh] sm:h-[calc(100dvh-5rem)] sm:mt-16 sm:mr-4 sm:mb-4 bg-panel/96 backdrop-blur-md border border-border-strong rounded-t-card sm:rounded-card shadow-float flex flex-col overflow-hidden transform-gpu"
+        className="pointer-events-auto relative z-10 w-full sm:w-[480px] lg:w-[520px] h-[88dvh] sm:h-[calc(100dvh-2.5rem)] sm:my-5 sm:mr-5 bg-panel/98 backdrop-blur-xl border border-border rounded-t-[24px] sm:rounded-[24px] shadow-float flex flex-col overflow-hidden transform-gpu"
       >
-        {/* Top Companion Strip */}
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2 shrink-0 bg-surface/65">
-          <div className="flex items-center gap-2.5 min-w-0">
+        {/* Minimalist Spacious Header */}
+        <div className="px-5 pt-4 pb-2.5 flex items-center justify-between gap-3 shrink-0 relative">
+          <div className="flex items-center gap-3 min-w-0">
             <div
               onClick={() =>
                 pet.adopted &&
                 triggerReaction(reactPose === 'stretching' ? 'grooming' : 'stretching')
               }
-              className="relative w-10 h-10 rounded-input bg-paper-oat border border-border flex items-end justify-center pb-1 shrink-0 cursor-pointer overflow-hidden"
+              className="relative w-9 h-9 rounded-full bg-overlay/75 flex items-end justify-center pb-1 shrink-0 cursor-pointer overflow-hidden"
               title="轻拍互动"
             >
-              <div className="w-8 h-7 flex items-end justify-center">
+              <div className="w-7 h-6 flex items-end justify-center">
                 <PetIllustrationSvg
                   species={pet.species || 'BLACK_CAT'}
                   pose={reactPose || defaultDrawerPose}
@@ -660,35 +649,74 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
               </AnimatePresence>
             </div>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h3 className="font-editorial text-base text-ink truncate">
-                  {pet.adopted ? `${pet.name} · Lv.${pet.level}` : '领养共享伙伴'}
-                </h3>
-                {pet.adopted && (
-                  <span className="px-1.5 py-0.5 rounded-chip bg-overlay text-[10px] text-muted tabular-nums">
-                    {pet.paw_coins} 币
-                  </span>
-                )}
-              </div>
-              <div className="text-[11px] text-muted truncate">
-                {pet.adopted
-                  ? `与 ${selfNickname} 的悄悄话 · 随时陪伴`
-                  : '住在冰箱顶上的数字小家守护生命'}
-              </div>
+            <div className="min-w-0 flex items-baseline gap-2">
+              <h3 className="font-editorial text-[17px] text-ink truncate">
+                {pet.adopted ? pet.name : '领养共享伙伴'}
+              </h3>
+              {pet.adopted && (
+                <span className="text-xs text-muted tabular-nums shrink-0">
+                  Lv.{pet.level} · {pet.paw_coins} 币
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
+            {pet.adopted && tab === 'whisper' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSessionMenuOpen((o) => !o)}
+                  title="切换历史对话"
+                  className="h-8 px-2.5 rounded-chip hover:bg-overlay text-xs text-muted hover:text-ink inline-flex items-center gap-1 max-w-[140px] transition-colors cursor-pointer"
+                >
+                  <History className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate hidden sm:inline">
+                    {currentSessionMeta?.title || '历史'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={streaming}
+                  onClick={handleNewSession}
+                  title="开启新私语"
+                  className="w-8 h-8 rounded-chip hover:bg-overlay flex items-center justify-center text-muted hover:text-ink disabled:opacity-40 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </>
+            )}
             <button
               type="button"
               onClick={onClose}
               aria-label="收起抽屉"
-              className="w-7 h-7 rounded-chip hover:bg-overlay flex items-center justify-center text-muted hover:text-ink transition-colors cursor-pointer"
+              className="w-8 h-8 rounded-chip hover:bg-overlay flex items-center justify-center text-muted hover:text-ink transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
+
+          {sessionMenuOpen && pet.adopted && tab === 'whisper' && (
+            <div className="absolute top-13 right-5 w-64 z-30 max-h-60 overflow-y-auto rounded-[16px] bg-panel border border-border-strong shadow-float p-1.5 space-y-0.5">
+              {sessions.map((s) => (
+                <button
+                  key={s.session_id}
+                  type="button"
+                  onClick={() => switchSession(s.session_id)}
+                  className={`w-full px-3 py-2 rounded-[10px] text-left text-xs flex items-center justify-between gap-2 cursor-pointer ${
+                    s.session_id === activeSessionId
+                      ? 'bg-overlay text-ink font-medium'
+                      : 'text-muted hover:bg-surface hover:text-ink'
+                  }`}
+                >
+                  <span className="truncate">{s.title}</span>
+                  <span className="text-[10px] text-subtle shrink-0">
+                    {s.status === 'SEALED' ? '归档' : '当前'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Unadopted Onboarding */}
@@ -749,119 +777,80 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
         ) : (
           /* Main 4-Tab Body (`私语 | 照料 | 杂货铺 | 纪念册`) */
           <>
-            <div className="px-4 pt-2.5 shrink-0">
-              <div className="grid grid-cols-4 p-1 rounded-input bg-overlay text-xs font-medium">
-                {(
-                  [
-                    ['whisper', '私语'],
-                    ['care', '照料'],
-                    ['shop', '杂货铺'],
-                    ['postcards', `纪念 (${pet.souvenirs.length})`],
-                  ] as const
-                ).map(([key, label]) => (
+            <div className="px-5 border-b border-border/75 flex items-center gap-6 shrink-0">
+              {(
+                [
+                  ['whisper', '私语'],
+                  ['care', '照料'],
+                  ['shop', '杂货铺'],
+                  ['postcards', `纪念 (${pet.souvenirs.length})`],
+                ] as const
+              ).map(([key, label]) => {
+                const active = tab === key;
+                return (
                   <button
                     key={key}
                     type="button"
-                    onClick={() => setTab(key)}
-                    className={`py-1.5 rounded-slip transition-colors cursor-pointer ${
-                      tab === key ? 'bg-panel text-ink shadow-xs' : 'text-muted hover:text-ink'
+                    onClick={() => {
+                      setTab(key);
+                      setSessionMenuOpen(false);
+                    }}
+                    className={`relative py-2.5 text-[13px] transition-colors cursor-pointer ${
+                      active ? 'text-ink font-medium' : 'text-muted hover:text-ink'
                     }`}
                   >
-                    {label}
+                    <span>{label}</span>
+                    {active && (
+                      <motion.span
+                        layoutId="kdPetTabUnderline"
+                        className="absolute inset-x-0 -bottom-[1px] h-[2px] rounded-full bg-ink"
+                      />
+                    )}
                   </button>
-                ))}
-              </div>
+                );
+              })}
             </div>
 
             {notice && (
-              <div className="mx-4 mt-2 p-2 rounded-slip bg-accent-soft border border-accent/30 text-xs text-ink flex items-center justify-between gap-2 shrink-0">
+              <div className="mx-5 mt-3 px-3 py-2 rounded-[12px] bg-accent-soft text-xs text-ink flex items-center justify-between gap-2 shrink-0">
                 <span className="truncate">{notice}</span>
                 <button
                   type="button"
                   onClick={() => setNotice(null)}
                   className="text-muted hover:text-ink"
                 >
-                  <X className="w-3 h-3" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
 
             {tab === 'whisper' ? (
               <div className="flex-1 min-h-0 flex flex-col">
-                {/* Per-Speaker S3 Session Bar */}
-                <div className="px-4 py-2 flex items-center justify-between gap-2 relative shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => setSessionMenuOpen((o) => !o)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-chip bg-surface border border-border hover:border-border-strong text-[11px] text-ink max-w-[230px] cursor-pointer"
-                  >
-                    <History className="w-3 h-3 text-muted shrink-0" />
-                    <span className="truncate">
-                      {currentSessionMeta?.title || '当前私语'}
-                    </span>
-                    <ChevronDown className="w-3 h-3 text-muted shrink-0" />
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={streaming}
-                    onClick={handleNewSession}
-                    title="封存当前话题进短期记忆，开启一段新私语"
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-chip bg-surface border border-border hover:border-border-strong text-[11px] text-ink disabled:opacity-45 cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3 text-accent" />
-                    <span>新私语</span>
-                  </button>
-
-                  {sessionMenuOpen && (
-                    <div className="absolute top-9 left-4 right-4 z-30 max-h-56 overflow-y-auto rounded-card bg-panel border border-border-strong shadow-float p-1.5 space-y-1">
-                      {sessions.map((s) => (
-                        <button
-                          key={s.session_id}
-                          type="button"
-                          onClick={() => switchSession(s.session_id)}
-                          className={`w-full px-2.5 py-1.5 rounded-slip text-left text-xs flex items-center justify-between gap-2 cursor-pointer ${
-                            s.session_id === activeSessionId
-                              ? 'bg-overlay text-ink font-medium'
-                              : 'text-muted hover:bg-surface hover:text-ink'
-                          }`}
-                        >
-                          <span className="truncate">{s.title}</span>
-                          <span className="text-[10px] text-subtle shrink-0">
-                            {s.status === 'SEALED' ? '已封板归档' : '进行中'}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
                 {/* Conversation & Google A2UI Stream */}
                 <div className="flex-1 min-h-0 relative flex flex-col">
                   <div
                     ref={chatScrollRef}
                     onScroll={handleChatScroll}
-                    className="flex-1 overflow-y-auto px-4 py-2.5 space-y-3.5 scroll-smooth"
+                    className="flex-1 overflow-y-auto px-5 py-5 space-y-6"
                     style={{ scrollBehavior: 'auto' }}
                   >
                     {loadingChat ? (
-                      <div className="py-12 flex items-center justify-center text-xs text-muted gap-2">
+                      <div className="py-16 flex items-center justify-center text-xs text-muted gap-2">
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>正在唤醒私语记录…</span>
+                        <span>唤醒私语记录…</span>
                       </div>
                     ) : turns.length === 0 && !streaming ? (
-                      <div className="py-6 space-y-3">
-                        <div className="p-3.5 rounded-card bg-paper-oat/70 border border-border space-y-1.5">
-                          <div className="text-xs font-medium text-ink flex items-center gap-1.5">
-                            <PawPrint className="w-3.5 h-3.5 text-accent" />
-                            <span>{pet.name} 正蹲在旁边听你说</span>
+                      <div className="pt-8 pb-4 space-y-5">
+                        <div className="space-y-1.5">
+                          <div className="font-editorial text-lg text-ink">
+                            嗨，{selfNickname}，{pet.name} 在听呢
                           </div>
-                          <p className="text-xs text-muted leading-relaxed">
-                            你可以让我帮你看冰箱、挑今晚菜单（我会直接给你生成可打勾的动态小卡片）、统计相册数据画图表，或者偷偷跟我商量给另一半的小惊喜。
+                          <p className="text-[13px] text-muted leading-relaxed">
+                            可以让我挑今晚菜单、看冰箱待办、查实时天气、画小家互动图表，或者悄悄商量给另一半的小惊喜。
                           </p>
                         </div>
 
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-2">
                           {[
                             '今晚菜单吃什么？给我列个打勾单',
                             '画张数据图看看我们小家的近期互动',
@@ -871,7 +860,7 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
                               key={q}
                               type="button"
                               onClick={() => sendTurn({ text: q })}
-                              className="px-2.5 py-1.5 rounded-chip bg-surface border border-border hover:border-border-strong text-[11px] text-ink transition-colors cursor-pointer"
+                              className="px-3.5 py-2 rounded-chip bg-surface/80 hover:bg-surface border border-border hover:border-border-strong text-xs text-ink transition-colors cursor-pointer"
                             >
                               {q}
                             </button>
@@ -890,7 +879,7 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
                           >
                             {isUser ? (
                               t.text && (
-                                <div className="max-w-[86%] px-3.5 py-2 rounded-card rounded-br-slip bg-ink text-surface text-xs leading-relaxed whitespace-pre-wrap break-words">
+                                <div className="max-w-[82%] px-4 py-2.5 rounded-[20px] rounded-br-[6px] bg-ink text-surface text-[13.5px] leading-relaxed whitespace-pre-wrap break-words">
                                   {t.text}
                                 </div>
                               )
@@ -910,7 +899,7 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
                       })
                     )}
 
-                    {/* Active Streaming Bubble (Single Unified Bubble!) */}
+                    {/* Active Streaming Turn */}
                     {streaming && (
                       <div className="flex flex-col items-start pb-1">
                         <AssistantReplyBubble
@@ -937,47 +926,49 @@ export const PetDrawer: React.FC<PetDrawerProps> = ({
                         exit={{ opacity: 0, y: 6 }}
                         transition={{ duration: 0.14 }}
                         onClick={() => scrollToBottom(true, true)}
-                        className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 px-3 py-1 rounded-chip bg-panel/95 border border-border-strong shadow-float text-[11px] text-ink flex items-center gap-1.5 hover:bg-surface transition-colors cursor-pointer"
+                        className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1.5 rounded-chip bg-panel/95 border border-border-strong shadow-float text-xs text-ink flex items-center gap-1.5 hover:bg-surface transition-colors cursor-pointer"
                       >
                         {streaming && (
                           <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
                         )}
                         <span>{streaming ? '跟随流式输出' : '回到底部'}</span>
-                        <ArrowDown className="w-3 h-3 text-muted" />
+                        <ArrowDown className="w-3.5 h-3.5 text-muted" />
                       </motion.button>
                     )}
                   </AnimatePresence>
                 </div>
 
-                {/* Composer */}
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    sendTurn({ text: draft });
-                  }}
-                  className="p-3 border-t border-border bg-surface/65 pb-safe flex items-center gap-2 shrink-0"
-                >
-                  <input
-                    type="text"
-                    disabled={streaming}
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder={`跟 ${pet.name} 说点悄悄话…`}
-                    className="flex-1 h-9 px-3 text-xs rounded-input bg-panel border border-border text-ink placeholder:text-subtle focus:outline-none focus:border-border-strong disabled:opacity-50"
-                  />
-                  <button
-                    type="submit"
-                    disabled={streaming || !draft.trim()}
-                    className="h-9 px-3.5 rounded-input bg-ink text-surface text-xs font-medium flex items-center gap-1.5 disabled:opacity-40 cursor-pointer shrink-0"
+                {/* Minimalist Floating Capsule Composer */}
+                <div className="px-5 pb-4 pt-2 pb-safe shrink-0">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      sendTurn({ text: draft });
+                    }}
+                    className="rounded-[22px] bg-surface/90 border border-border focus-within:border-border-strong focus-within:bg-panel pl-4 pr-1.5 py-1.5 flex items-center gap-2 transition-colors"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>发送</span>
-                  </button>
-                </form>
+                    <input
+                      type="text"
+                      disabled={streaming}
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      placeholder={`跟 ${pet.name} 说点悄悄话…`}
+                      className="flex-1 bg-transparent text-[13.5px] text-ink placeholder:text-subtle focus:outline-none disabled:opacity-50"
+                    />
+                    <button
+                      type="submit"
+                      disabled={streaming || !draft.trim()}
+                      aria-label="发送"
+                      className="w-8 h-8 rounded-full bg-ink text-surface flex items-center justify-center disabled:opacity-20 transition-opacity cursor-pointer shrink-0"
+                    >
+                      <ArrowUp className="w-4 h-4 stroke-[2.2]" />
+                    </button>
+                  </form>
+                </div>
               </div>
             ) : (
               /* Care / Shop / Postcards Scrollable Area */
-              <div className="flex-1 overflow-y-auto p-4 pb-safe space-y-4">
+              <div className="flex-1 overflow-y-auto p-5 pb-safe space-y-4">
                 {tab === 'care' && (
                   <div className="space-y-4">
                     <div className="grid grid-cols-4 gap-2 text-center">

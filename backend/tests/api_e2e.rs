@@ -1082,13 +1082,20 @@ async fn pet_agent_kernel_e2e_and_isolation_suite() {
     assert!(!bash_out.contains("super_secret_jwt"), "env_clear must strip parent secrets!");
     assert!(bash_out.contains("[cwd: ~/private | shared: ~/shared]"));
 
-    let tctx = ToolExecContext {
-        state: state.clone(),
+    let tctx = ToolExecContext::new(
+        state.clone(),
         space_id,
-        user_id: uid_a,
-        session_id: "test_sess".to_string(),
-        vfs: vfs_a,
-    };
+        uid_a,
+        "test_sess".to_string(),
+    );
+    // Verify `grep_files` directory walk skips self-referential `private -> .` symlink cleanly
+    let listed = state
+        .agent
+        .registry
+        .dispatch(&tctx, "grep_files", json!({ "scope": "both" }))
+        .await
+        .unwrap();
+    assert!(!listed.model_text.contains("~/private/private/"));
     let searched = state
         .agent
         .registry
@@ -1398,6 +1405,96 @@ async fn pet_agent_kernel_e2e_and_isolation_suite() {
     assert_eq!(st_hot, StatusCode::OK);
     assert_eq!(hot_res["providers"][0]["id"].as_str().unwrap(), mm_id);
     assert!(hot_res["providers"][0]["is_chat_primary"].as_bool().unwrap());
+
+    // Security check: changing `base_url` while sending masked `••••` token MUST be rejected (400)!
+    let (st_exfil, _) = send_json(
+        &app,
+        Method::PUT,
+        &format!("/api/v1/spaces/{space_id_str}/pet/agent/providers"),
+        Some(&token_b),
+        Some(json!({
+            "id": mm_id,
+            "name": "MiniMax",
+            "protocol": "openai_compat",
+            "base_url": "https://evil-attacker.example.com/v1",
+            "api_key": "sk-m••••9876",
+            "enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(st_exfil, StatusCode::BAD_REQUEST);
+
+    // Cross-tenant security check: User C in another space CANNOT overwrite Space AB's provider `id` via `ON CONFLICT(id)`!
+    let (_, reg_c) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/auth/register",
+        None,
+        Some(json!({ "username": "intruder_c", "password": "password123" })),
+    )
+    .await;
+    let token_c = reg_c["access_token"].as_str().unwrap().to_string();
+    let (_, sp_c) = send_json(
+        &app,
+        Method::POST,
+        "/api/v1/spaces",
+        Some(&token_c),
+        Some(json!({ "name": "Intruder Home" })),
+    )
+    .await;
+    let sp_c_id = sp_c["id"].as_str().unwrap();
+    let (st_cross, _) = send_json(
+        &app,
+        Method::PUT,
+        &format!("/api/v1/spaces/{sp_c_id}/pet/agent/providers"),
+        Some(&token_c),
+        Some(json!({
+            "id": mm_id,
+            "vendor": "openai",
+            "name": "Hijacked",
+            "api_key": "sk-attacker-1234567890",
+            "enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(st_cross, StatusCode::FORBIDDEN);
+
+    // MCP headers masking & non-owner stdio restriction check:
+    let (st_non_owner_stdio, _) = send_json(
+        &app,
+        Method::PUT,
+        &format!("/api/v1/spaces/{space_id_str}/pet/agent/mcp"),
+        Some(&token_b),
+        Some(json!({
+            "name": "LocalCmd",
+            "transport": "stdio",
+            "endpoint": "echo",
+            "args": ["hi"],
+            "enabled": false
+        })),
+    )
+    .await;
+    assert_eq!(st_non_owner_stdio, StatusCode::FORBIDDEN);
+
+    let (st_mcp_http, mcp_res) = send_json(
+        &app,
+        Method::PUT,
+        &format!("/api/v1/spaces/{space_id_str}/pet/agent/mcp"),
+        Some(&token_a),
+        Some(json!({
+            "name": "WeatherHTTP",
+            "transport": "http",
+            "endpoint": "https://mcp.example.com/mcp",
+            "headers": { "Authorization": "Bearer super_secret_mcp_token_9999" },
+            "enabled": false
+        })),
+    )
+    .await;
+    assert_eq!(st_mcp_http, StatusCode::OK);
+    let masked_hdr = mcp_res["mcp_servers"][0]["headers"]["Authorization"]
+        .as_str()
+        .unwrap();
+    assert!(masked_hdr.contains("••••") && !masked_hdr.contains("super_secret"));
 
     // Delete test providers so builtin fallback stays active if needed
     for p in hot_res["providers"].as_array().unwrap() {

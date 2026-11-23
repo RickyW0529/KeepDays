@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
-use std::sync::{LazyLock, RwLock};
+use std::sync::{LazyLock, Mutex as StdMutex, RwLock};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -36,6 +36,9 @@ struct CachedMcpEntry {
 
 static MCP_RUNTIME_CACHE: LazyLock<RwLock<HashMap<String, CachedMcpEntry>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static MCP_IN_FLIGHT_PROBES: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfigDto {
@@ -244,14 +247,50 @@ pub async fn discover_mcp_tools(state: &AppState, space_id: i64) -> Vec<McpDisco
 }
 
 /// Returns a structured overview of connected MCP servers & their workflow instructions for the system prompt.
+/// Non-blocking on stale/failing servers: serves cached entries immediately and refreshes expired servers in background
+/// (waiting at most 900ms on a completely cold first probe so chat TTFB never stalls 20+ seconds!).
 pub async fn discover_mounted_mcp_overviews(
     state: &AppState,
     space_id: i64,
 ) -> Vec<MountedMcpOverview> {
     let servers = query_raw_mcp_servers(state, space_id, true).await;
     let mut out = Vec::new();
+    let now = now_ms();
+
     for srv in servers {
-        let entry = ensure_server_probed(space_id, &srv, false).await;
+        let cache_key = format!("{space_id}:{}", srv.id);
+        let fp = server_fingerprint(&srv);
+        let cached = MCP_RUNTIME_CACHE
+            .read()
+            .ok()
+            .and_then(|g| g.get(&cache_key).cloned())
+            .filter(|e| e.fingerprint == fp);
+
+        let entry = match cached {
+            Some(existing) => {
+                let ttl = if existing.health_status == "connected" {
+                    MCP_CONNECTED_CACHE_TTL_MS
+                } else {
+                    MCP_ERROR_CACHE_TTL_MS
+                };
+                if now - existing.updated_at_ms >= ttl {
+                    spawn_background_mcp_probe(space_id, srv.clone());
+                }
+                existing
+            }
+            None => {
+                // First cold access: give fast local/HTTP servers up to 900ms, otherwise continue in background!
+                let srv_bg = srv.clone();
+                let handle = tokio::spawn(async move {
+                    ensure_server_probed(space_id, &srv_bg, false).await
+                });
+                match tokio::time::timeout(Duration::from_millis(900), handle).await {
+                    Ok(Ok(probed)) => probed,
+                    _ => continue,
+                }
+            }
+        };
+
         if entry.health_status == "connected" && !entry.tools.is_empty() {
             out.push(MountedMcpOverview {
                 server_name: srv.name.clone(),
@@ -261,6 +300,21 @@ pub async fn discover_mounted_mcp_overviews(
         }
     }
     out
+}
+
+fn spawn_background_mcp_probe(space_id: i64, srv: McpServerConfigDto) {
+    let cache_key = format!("{space_id}:{}", srv.id);
+    if let Ok(mut set) = MCP_IN_FLIGHT_PROBES.lock() {
+        if !set.insert(cache_key.clone()) {
+            return;
+        }
+    }
+    tokio::spawn(async move {
+        let _ = ensure_server_probed(space_id, &srv, true).await;
+        if let Ok(mut set) = MCP_IN_FLIGHT_PROBES.lock() {
+            set.remove(&cache_key);
+        }
+    });
 }
 
 /// Invokes an MCP tool by either its qualified name (`mcp__weather__openmeteo_get_forecast`)
@@ -848,7 +902,17 @@ async fn mcp_streamable_http_call(
 fn resolve_sse_endpoint_url(base_sse_url: &str, raw_endpoint: &str) -> String {
     let ep = raw_endpoint.trim();
     if ep.starts_with("http://") || ep.starts_with("https://") {
-        return ep.to_string();
+        // Prevent cross-origin SSRF / credential forwarding if remote SSE server returns a different origin!
+        let origin_of = |u: &str| -> Option<String> {
+            let sep = u.find("://")?;
+            let rest = &u[sep + 3..];
+            let host_end = rest.find('/').unwrap_or(rest.len());
+            Some(u[..sep + 3 + host_end].to_ascii_lowercase())
+        };
+        if origin_of(ep) == origin_of(base_sse_url) {
+            return ep.to_string();
+        }
+        return String::new();
     }
     // Extract scheme://authority from base_sse_url
     if let Some(scheme_sep) = base_sse_url.find("://") {
@@ -1047,6 +1111,15 @@ async fn mcp_stdio_call(
     method: &str,
     params: Value,
 ) -> Result<(String, Value), String> {
+    if std::env::var("ALLOW_STDIO_MCP")
+        .map(|v| v.eq_ignore_ascii_case("false") || v == "0")
+        .unwrap_or(false)
+    {
+        return Err(
+            "当前服务器已禁用本地命令行 (stdio) MCP，请改用远程 HTTP/SSE MCP 服务".to_string(),
+        );
+    }
+
     let raw_ep = srv.endpoint.trim();
     let (program, final_args): (String, Vec<String>) =
         if srv.args.is_empty() && raw_ep.contains(' ') {
@@ -1064,13 +1137,37 @@ async fn mcp_stdio_call(
         return Err("MCP 命令不能为空".to_string());
     }
 
+    let safe_cwd = std::env::temp_dir().join("keepdays-mcp-sandbox");
+    let safe_home = safe_cwd.join("home");
+    let _ = std::fs::create_dir_all(&safe_home);
+
     let mut cmd = Command::new(&program);
-    cmd.args(&final_args)
+    // Strip ALL KeepDays daemon secrets (`JWT_SECRET`, `S3_SECRET_KEY`, `ADMIN_API_KEY`, `DATABASE_URL`)!
+    cmd.env_clear()
+        .args(&final_args)
+        .current_dir(&safe_cwd)
         .env("PATH", build_enriched_stdio_path())
+        .env("HOME", &safe_home)
+        .env("TMPDIR", std::env::temp_dir())
+        .env("LANG", "C.UTF-8")
+        .env("TERM", "dumb")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+
+    for safe_sys_key in ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"] {
+        if let Ok(val) = std::env::var(safe_sys_key) {
+            cmd.env(safe_sys_key, val);
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        #[allow(unused_imports)]
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
 
     // Inject user-provided env vars (stored in `headers` for stdio servers, e.g. GMAIL_CLIENT_ID / API keys)
     for (k, v) in &srv.headers {
@@ -1084,10 +1181,43 @@ async fn mcp_stdio_call(
         .spawn()
         .map_err(|e| format!("启动本地 MCP 命令 `{program}` 失败: {e}"))?;
 
+    struct ProcessGroupKillGuard {
+        #[cfg(unix)]
+        pgid: Option<i32>,
+    }
+    impl Drop for ProcessGroupKillGuard {
+        fn drop(&mut self) {
+            #[cfg(unix)]
+            if let Some(pgid) = self.pgid {
+                if pgid > 1 {
+                    unsafe {
+                        let _ = libc::kill(-pgid, libc::SIGKILL);
+                    }
+                }
+            }
+        }
+    }
+    let _pg_guard = ProcessGroupKillGuard {
+        #[cfg(unix)]
+        pgid: child.id().and_then(|id| i32::try_from(id).ok()),
+    };
+
     let mut stdin = child.stdin.take().ok_or("stdin unavailable")?;
     let stdout = child.stdout.take().ok_or("stdout unavailable")?;
-    let mut stderr = child.stderr.take();
+    let stderr = child.stderr.take();
     let mut reader = BufReader::new(stdout).lines();
+
+    // Drain `stderr` concurrently so >64KB startup/debug logs NEVER deadlock the child process pipe!
+    let stderr_task = tokio::spawn(async move {
+        let mut captured = Vec::new();
+        if let Some(se) = stderr {
+            let mut head = se.take(4096);
+            let _ = head.read_to_end(&mut captured).await;
+            let mut rest = head.into_inner();
+            let _ = tokio::io::copy(&mut rest, &mut tokio::io::sink()).await;
+        }
+        String::from_utf8_lossy(&captured).trim().to_string()
+    });
 
     let init_msg = json!({
         "jsonrpc": "2.0",
@@ -1150,17 +1280,17 @@ async fn mcp_stdio_call(
     };
 
     match tokio::time::timeout(Duration::from_secs(25), exchange).await {
-        Ok(Ok(pair)) => Ok(pair),
+        Ok(Ok(pair)) => {
+            stderr_task.abort();
+            Ok(pair)
+        }
         Ok(Err(err_msg)) => {
-            let mut err_tail = String::new();
-            if let Some(mut se) = stderr.take() {
-                let mut buf = vec![0u8; 1024];
-                if let Ok(Ok(n)) = tokio::time::timeout(Duration::from_millis(120), se.read(&mut buf)).await {
-                    if n > 0 {
-                        err_tail = String::from_utf8_lossy(&buf[..n]).trim().to_string();
-                    }
-                }
-            }
+            drop(_pg_guard);
+            let err_tail = tokio::time::timeout(Duration::from_millis(150), stderr_task)
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
             if err_tail.is_empty() {
                 Err(err_msg)
             } else {
@@ -1168,7 +1298,10 @@ async fn mcp_stdio_call(
                 Err(format!("{err_msg} ({short})"))
             }
         }
-        Err(_) => Err("本地 MCP stdio 命令执行超时（首次 npx 下载依赖可能较慢，可点刷新重试）".to_string()),
+        Err(_) => {
+            stderr_task.abort();
+            Err("本地 MCP stdio 命令执行超时（首次 npx 下载依赖可能较慢，可点刷新重试）".to_string())
+        }
     }
 }
 

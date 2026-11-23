@@ -107,7 +107,7 @@ if ! id -u keepdays >/dev/null 2>&1; then
 fi
 
 # Create persistent directories (NEVER wiped across deployments!)
-mkdir -p /var/lib/keepdays/db /var/lib/keepdays/uploads /var/lib/keepdays/agent_fs /etc/keepdays /opt/keepdays
+mkdir -p /var/lib/keepdays/db /var/lib/keepdays/uploads /var/lib/keepdays/agent_fs/.grok_home /etc/keepdays /opt/keepdays
 chown -R keepdays:keepdays /var/lib/keepdays
 
 # Provision 512MB Swap safety airbag ONLY if server currently has 0 swap (touches zero WireGuard/Xray sysctls!)

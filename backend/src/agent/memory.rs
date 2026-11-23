@@ -15,8 +15,8 @@ use crate::{
 pub const SESSION_IDLE_SEAL_MS: i64 = 30 * 60 * 1000; // 30 minutes natural silence seals session
 pub const STM_RETENTION_MS: i64 = 7 * 24 * 3600 * 1000; // 7-day rolling STM window
 pub const CLARIFY_COOLDOWN_MS: i64 = 24 * 3600 * 1000; // Max 1 piggyback question per 24h
-const LTM_SHARED_CHAR_BUDGET: usize = 2600; // ~1500 CJK/mixed tokens
-const LTM_PRIVATE_CHAR_BUDGET: usize = 1800; // ~1000 CJK/mixed tokens
+pub const LTM_SHARED_CHAR_BUDGET: usize = 2600; // ~1500 CJK/mixed tokens
+pub const LTM_PRIVATE_CHAR_BUDGET: usize = 1800; // ~1000 CJK/mixed tokens
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolTraceSummary {
@@ -377,30 +377,36 @@ pub async fn maybe_roll_compact_session(
     space_id: i64,
     session_id: &str,
     existing_rolling: &str,
+    compacted_turn_count: usize,
     turns: &[SessionTurnRecord],
-) -> String {
-    if turns.len() <= 24 {
-        return existing_rolling.to_string();
+) -> (String, usize) {
+    let start = compacted_turn_count.min(turns.len());
+    let uncompacted = &turns[start..];
+    if uncompacted.len() <= 20 {
+        return (existing_rolling.to_string(), start);
     }
-    let token_counts: Vec<u32> = turns
+    let token_counts: Vec<u32> = uncompacted
         .iter()
         .map(|t| ((t.text.chars().count() as u32).saturating_add(12)) / 2)
         .collect();
 
     let Some(split_plan) =
-        xai_grok_compaction::select_turns_to_compact(&token_counts, turns, 3_600, 2_400)
+        xai_grok_compaction::select_turns_to_compact(&token_counts, uncompacted, 1_800, 1_200)
     else {
-        return existing_rolling.to_string();
+        return (existing_rolling.to_string(), start);
     };
+    if split_plan.split_idx == 0 {
+        return (existing_rolling.to_string(), start);
+    }
 
-    let older_slice = &turns[..split_plan.split_idx];
+    let older_slice = &uncompacted[..split_plan.split_idx];
     let mut transcript = String::new();
     if !existing_rolling.trim().is_empty() {
         transcript.push_str("【既有前情提要】\n");
         transcript.push_str(existing_rolling);
         transcript.push_str("\n\n");
     }
-    for t in older_slice.iter().rev().take(24).rev() {
+    for t in older_slice {
         transcript.push_str(&format!("[{}]: {}\n", t.role, t.text));
     }
 
@@ -418,19 +424,26 @@ pub async fn maybe_roll_compact_session(
     )
     .await
     {
+        if comp.provider_used == "builtin:local" {
+            return (existing_rolling.to_string(), start);
+        }
         let next = comp.text.trim().to_string();
         if !next.is_empty() {
+            let new_cursor = start + split_plan.split_idx;
             let _ = sqlx::query(
-                "UPDATE agent_sessions SET rolling_summary = ?1 WHERE session_id = ?2",
+                "UPDATE agent_sessions
+                 SET rolling_summary = ?1, compacted_turn_count = ?2
+                 WHERE session_id = ?3",
             )
             .bind(&next)
+            .bind(new_cursor as i64)
             .bind(session_id)
             .execute(&state.db.write)
             .await;
-            return next;
+            return (next, new_cursor);
         }
     }
-    existing_rolling.to_string()
+    (existing_rolling.to_string(), start)
 }
 
 /// Renders Long-Term Memory (`Shared` + `User Private` ONLY) to place immediately after System Prompt.
@@ -487,8 +500,9 @@ pub async fn render_ltm_for_system_prompt(state: &AppState, space_id: i64, user_
     out
 }
 
-/// Pops at most 1 pending ambiguous question if the user hasn't been asked in the last 24 hours.
-pub async fn pop_piggyback_clarification(
+/// Peeks at most 1 pending ambiguous question if the user hasn't been asked in the last 24 hours.
+/// Call [`mark_clarification_asked`] ONLY after the turn finishes streaming so failed/cancelled turns don't burn it!
+pub async fn peek_piggyback_clarification(
     state: &AppState,
     space_id: i64,
     user_id: i64,
@@ -526,16 +540,19 @@ pub async fn pop_piggyback_clarification(
 
     let cid: i64 = row.get("id");
     let hint: String = row.get("question_hint");
+    Some((cid, hint))
+}
 
+pub async fn mark_clarification_asked(state: &AppState, clarification_id: i64) {
     let _ = sqlx::query(
-        "UPDATE agent_clarifications SET status = 'ASKED', asked_at = ?1 WHERE id = ?2",
+        "UPDATE agent_clarifications
+         SET status = 'ASKED', asked_at = ?1
+         WHERE id = ?2 AND status = 'PENDING'",
     )
-    .bind(now)
-    .bind(cid)
+    .bind(now_ms())
+    .bind(clarification_id)
     .execute(&state.db.write)
     .await;
-
-    Some((cid, hint))
 }
 
 /// Applies a Git-Style atomic Commit (`parent_rev` -> `rev_id`) onto `agent_ltm_head` & `agent_ltm_commits`,
@@ -646,24 +663,7 @@ pub async fn apply_ltm_git_commit(
         return Ok(None);
     }
 
-    let ops_json = serde_json::to_string(&applied_ops).unwrap_or_else(|_| "[]".into());
-    sqlx::query(
-        "INSERT INTO agent_ltm_commits (rev_id, space_id, scope, parent_rev, source_session_id, message, ops_json, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-    )
-    .bind(&rev_id)
-    .bind(space_id)
-    .bind(scope)
-    .bind(&parent_rev)
-    .bind(source_session_id)
-    .bind(message)
-    .bind(&ops_json)
-    .bind(now)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    // Enforce hard char/token ceiling on HEAD by pruning oldest low-priority slots if over budget
+    // Enforce hard char/token ceiling on HEAD BEFORE writing commit log so pruned slots are recorded in `ops_json` (reversible!)
     let cap = if scope == "shared" {
         LTM_SHARED_CHAR_BUDGET
     } else {
@@ -672,7 +672,7 @@ pub async fn apply_ltm_git_commit(
     let head_rows = sqlx::query(
         "SELECT slot_key, slot_value FROM agent_ltm_head
          WHERE space_id = ?1 AND scope = ?2
-         ORDER BY updated_at DESC",
+         ORDER BY updated_at DESC, rowid DESC",
     )
     .bind(space_id)
     .bind(scope)
@@ -694,10 +694,35 @@ pub async fn apply_ltm_git_commit(
             .bind(&k)
             .execute(&mut *tx)
             .await;
+            applied_ops.push(LtmDiffOp {
+                op: "DELETE".to_string(),
+                slot_key: k,
+                old_val: Some(v),
+                new_val: None,
+                reason: "超出长期记忆容量预算自动精简".to_string(),
+            });
         }
     }
 
+    let ops_json = serde_json::to_string(&applied_ops).unwrap_or_else(|_| "[]".into());
+    sqlx::query(
+        "INSERT INTO agent_ltm_commits (rev_id, space_id, scope, parent_rev, source_session_id, message, ops_json, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(&rev_id)
+    .bind(space_id)
+    .bind(scope)
+    .bind(&parent_rev)
+    .bind(source_session_id)
+    .bind(message)
+    .bind(&ops_json)
+    .bind(now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+
     tx.commit().await.map_err(|e| e.to_string())?;
+    drop(_guard);
 
     let commit_dto = LtmCommitDto {
         rev_id: rev_id.clone(),
@@ -928,7 +953,7 @@ pub async fn promote_stm_to_ltm(state: &AppState) {
     let rows = match sqlx::query(
         "SELECT id, space_id, scope, source_session_id, speaker_user_id, summary_text
          FROM agent_stm_segments
-         WHERE promoted_to_ltm = 0 AND archived_at IS NULL
+         WHERE promoted_to_ltm = 0 AND promote_attempts < 5 AND archived_at IS NULL
          ORDER BY created_at ASC
          LIMIT 8",
     )
@@ -991,6 +1016,9 @@ pub async fn promote_stm_to_ltm(state: &AppState) {
             }
         );
 
+        let mut promoted_ok = false;
+        let mut skipped_local_fallback = false;
+
         if let Ok(comp) = complete_with_failover(
             state,
             space_id,
@@ -1002,7 +1030,9 @@ pub async fn promote_stm_to_ltm(state: &AppState) {
         )
         .await
         {
-            if let Some(obj) = extract_json_object(&comp.text) {
+            if comp.provider_used == "builtin:local" {
+                skipped_local_fallback = true;
+            } else if let Some(obj) = extract_json_object(&comp.text) {
                 let msg = obj
                     .get("commit_message")
                     .and_then(|v| v.as_str())
@@ -1012,7 +1042,12 @@ pub async fn promote_stm_to_ltm(state: &AppState) {
                     .get("ops")
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default();
-                let _ = apply_ltm_git_commit(state, space_id, &scope, &session_id, &msg, ops).await;
+                if apply_ltm_git_commit(state, space_id, &scope, &session_id, &msg, ops)
+                    .await
+                    .is_ok()
+                {
+                    promoted_ok = true;
+                }
 
                 if let Some(contras) = obj.get("contradictions").and_then(|v| v.as_array()) {
                     for c in contras.iter().take(1) {
@@ -1036,10 +1071,24 @@ pub async fn promote_stm_to_ltm(state: &AppState) {
             }
         }
 
-        let _ = sqlx::query("UPDATE agent_stm_segments SET promoted_to_ltm = 1 WHERE id = ?1")
+        if skipped_local_fallback {
+            // Keep `promoted_to_ltm = 0` untouched until an external LLM provider is configured!
+            continue;
+        }
+
+        if promoted_ok {
+            let _ = sqlx::query("UPDATE agent_stm_segments SET promoted_to_ltm = 1 WHERE id = ?1")
+                .bind(seg_id)
+                .execute(&state.db.write)
+                .await;
+        } else {
+            let _ = sqlx::query(
+                "UPDATE agent_stm_segments SET promote_attempts = promote_attempts + 1 WHERE id = ?1",
+            )
             .bind(seg_id)
             .execute(&state.db.write)
             .await;
+        }
     }
 }
 

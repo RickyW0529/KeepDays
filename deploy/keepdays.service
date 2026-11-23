@@ -9,15 +9,17 @@ User=keepdays
 Group=keepdays
 WorkingDirectory=/opt/keepdays
 EnvironmentFile=/etc/keepdays/keepdays.env
+Environment="HOME=/var/lib/keepdays/agent_fs"
+Environment="GROK_HOME=/var/lib/keepdays/agent_fs/.grok_home"
 ExecStartPre=/opt/keepdays/keepdays-server --self-check
 ExecStart=/opt/keepdays/keepdays-server
 Restart=always
 RestartSec=3
 
-# Strict memory guardrails for Vultr 1vCPU / 512MB RAM VPS
-# Guarantees KeepDays NEVER starves existing Xray (443), WireGuard, or Demo (8080)!
-MemoryHigh=200M
-MemoryMax=280M
+# Strict memory guardrails for 1vCPU / 512MB-1GB RAM VPS
+# Guarantees KeepDays NEVER starves co-hosted proxy / tunnel services!
+MemoryHigh=320M
+MemoryMax=450M
 LimitNOFILE=32768
 
 # Security & Persistent Data Isolation (/var/lib/keepdays)

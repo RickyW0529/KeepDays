@@ -140,7 +140,22 @@ async fn inject_peer_ip_header(mut req: Request, next: Next) -> Response {
             req.headers_mut().insert("x-internal-peer-ip", val);
         }
     }
-    next.run(req).await
+    let mut resp = next.run(req).await;
+    let is_sse = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("text/event-stream"))
+        .unwrap_or(false);
+    if is_sse {
+        resp.headers_mut()
+            .insert("x-accel-buffering", HeaderValue::from_static("no"));
+        resp.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache, no-transform"),
+        );
+    }
+    resp
 }
 
 fn spawn_maintenance_worker(state: AppState) {

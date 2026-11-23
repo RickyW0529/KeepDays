@@ -8,18 +8,19 @@
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS agent_sessions (
-    session_id      TEXT PRIMARY KEY NOT NULL,
-    space_id        INTEGER NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
-    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title           TEXT NOT NULL DEFAULT '与伙伴的私语',
-    status          TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE' | 'SEALED'
-    turn_count      INTEGER NOT NULL DEFAULT 0,
-    s3_key          TEXT NOT NULL,
-    rolling_summary TEXT NOT NULL DEFAULT '',
-    stm_extracted   INTEGER NOT NULL DEFAULT 0,
-    last_active_at  INTEGER NOT NULL,
-    sealed_at       INTEGER,
-    created_at      INTEGER NOT NULL
+    session_id           TEXT PRIMARY KEY NOT NULL,
+    space_id             INTEGER NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title                TEXT NOT NULL DEFAULT '与伙伴的私语',
+    status               TEXT NOT NULL DEFAULT 'ACTIVE', -- 'ACTIVE' | 'SEALED'
+    turn_count           INTEGER NOT NULL DEFAULT 0,
+    compacted_turn_count INTEGER NOT NULL DEFAULT 0,
+    s3_key               TEXT NOT NULL,
+    rolling_summary      TEXT NOT NULL DEFAULT '',
+    stm_extracted        INTEGER NOT NULL DEFAULT 0,
+    last_active_at       INTEGER NOT NULL,
+    sealed_at            INTEGER,
+    created_at           INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_user
     ON agent_sessions(space_id, user_id, last_active_at DESC);
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS agent_stm_segments (
     summary_text      TEXT NOT NULL,
     keywords_seg      TEXT NOT NULL,
     promoted_to_ltm   INTEGER NOT NULL DEFAULT 0,
+    promote_attempts  INTEGER NOT NULL DEFAULT 0,
     s3_key            TEXT NOT NULL,
     created_at        INTEGER NOT NULL,
     archived_at       INTEGER,
@@ -53,6 +55,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS agent_stm_fts USING fts5(
     tokens,
     summary
 );
+
+CREATE TRIGGER IF NOT EXISTS trg_agent_stm_segments_ad
+AFTER DELETE ON agent_stm_segments
+BEGIN
+    DELETE FROM agent_stm_fts WHERE CAST(segment_id AS INTEGER) = OLD.id;
+END;
 
 -- Ambiguous Short-Term Memory Clarification Queue (Piggyback gentle inquiry)
 CREATE TABLE IF NOT EXISTS agent_clarifications (

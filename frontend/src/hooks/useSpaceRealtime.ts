@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, getAccessToken, setAccessToken } from '../lib/apiClient';
+import { getAccessToken, silentRefreshOnce } from '../lib/apiClient';
 import { predecodeImageOffscreen } from '../lib/mediaProcessor';
 import type {
   PetAgentEmotePayload,
@@ -254,14 +254,13 @@ export function useSpaceRealtime({
         retryAttempt = Math.min(retryAttempt + 1, 5);
         reconnectTimer = window.setTimeout(async () => {
           if (disposed) return;
-          try {
-            const refreshed = await api.refresh();
-            setAccessToken(refreshed.access_token);
-            connect(refreshed.access_token);
-            cbRef.current.onResyncNeeded?.();
-          } catch {
-            const latest = getAccessToken();
-            if (latest) connect(latest);
+          const ok = await silentRefreshOnce();
+          const latest = getAccessToken();
+          if (latest) {
+            connect(latest);
+            if (ok) {
+              cbRef.current.onResyncNeeded?.();
+            }
           }
         }, delay);
       };

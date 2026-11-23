@@ -27,6 +27,16 @@ const CHART_PALETTE = [
   'color-mix(in srgb, var(--kd-accent) 42%, var(--kd-surface))',
 ];
 
+const FORM_BOUND_COMPONENTS = new Set([
+  'Checkbox',
+  'CheckboxGroup',
+  'Switch',
+  'ChoiceChips',
+  'Slider',
+  'Stepper',
+  'TextField',
+]);
+
 export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
   surface,
   disabled,
@@ -64,6 +74,26 @@ export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
     for (const c of surface.components) m.set(c.id, c);
     return m;
   }, [surface.components]);
+
+  const hasFormInputs = useMemo(
+    () => surface.components.some((c) => FORM_BOUND_COMPONENTS.has(c.component)),
+    [surface.components],
+  );
+  const hasExplicitActionButtons = useMemo(
+    () =>
+      surface.components.some(
+        (c) => c.component === 'Button' || c.component === 'ActionGroup',
+      ),
+    [surface.components],
+  );
+
+  // Deduplicate root Card title if it repeats `surface.title`
+  const rootNode = nodeMap.get(surface.root_id);
+  const rootCardTitle =
+    rootNode?.component === 'Card' && typeof rootNode.props?.title === 'string'
+      ? rootNode.props.title.trim()
+      : '';
+  const effectiveHeaderTitle = (surface.title || '').trim() || rootCardTitle;
 
   const isLocked = Boolean(disabled || submitted);
 
@@ -175,20 +205,31 @@ export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
     const val = model[key];
 
     switch (node.component) {
-      case 'Card':
+      case 'Card': {
+        const cardTitle = typeof p.title === 'string' ? p.title.trim() : '';
+        // Flatten `Card` completely so LLM-generated `Card` roots NEVER create Russian-doll nested boxes!
+        const showSubTitle =
+          cardTitle &&
+          cardTitle !== effectiveHeaderTitle &&
+          !(effectiveHeaderTitle && effectiveHeaderTitle.includes(cardTitle));
         return (
           <div
             key={node.id}
-            className="p-3.5 rounded-card bg-surface border border-border shadow-xs space-y-2.5"
+            className={
+              depth === 0
+                ? 'space-y-3'
+                : 'pt-2.5 border-t border-border/60 space-y-2.5'
+            }
           >
-            {typeof p.title === 'string' && p.title && (
-              <div className="text-xs font-medium text-ink">{p.title}</div>
+            {showSubTitle && (
+              <div className="text-[13px] font-medium text-ink">{cardTitle}</div>
             )}
             <div className="space-y-2.5">
               {(node.children || []).map((cid) => renderNode(cid, depth + 1))}
             </div>
           </div>
         );
+      }
 
       case 'Column':
         return (
@@ -319,15 +360,15 @@ export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
         return (
           <div
             key={node.id}
-            className="p-2.5 rounded-slip bg-panel border border-border flex flex-col justify-between"
+            className="px-3.5 py-2.5 rounded-[12px] bg-overlay/55 flex flex-col justify-between"
           >
-            <span className="text-[10px] text-muted">{String(p.label || '')}</span>
+            <span className="text-[11px] text-muted">{String(p.label || '')}</span>
             <div className="flex items-baseline justify-between gap-1.5 mt-1">
-              <span className="text-base font-semibold text-ink tabular-nums">
+              <span className="text-[17px] font-semibold text-ink tabular-nums tracking-tight">
                 {String(p.value ?? '-')}
               </span>
               {p.delta !== undefined && (
-                <span className="text-[10px] text-accent font-medium tabular-nums">
+                <span className="text-[11px] text-accent font-medium tabular-nums">
                   {String(p.delta)}
                 </span>
               )}
@@ -727,14 +768,16 @@ export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
   };
 
   return (
-    <div className="rounded-card bg-paper-oat/65 border border-border p-3 space-y-2.5 shadow-xs">
-      {surface.title && (
+    <div className="w-full rounded-[16px] bg-surface/80 border border-border/80 p-4 space-y-3">
+      {effectiveHeaderTitle && (
         <div className="flex items-center justify-between gap-2">
-          <span className="font-editorial text-sm text-ink">{surface.title}</span>
+          <span className="text-[14px] font-semibold text-ink tracking-tight">
+            {effectiveHeaderTitle}
+          </span>
           {submitted && (
             <span className="px-2 py-0.5 rounded-chip bg-overlay text-[10px] text-muted flex items-center gap-1">
               <Check className="w-2.5 h-2.5 text-accent" />
-              <span>已回传</span>
+              <span>已确认</span>
             </span>
           )}
         </div>
@@ -742,10 +785,10 @@ export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
 
       {renderNode(surface.root_id)}
 
-      {/* Debounce Auto-Send Bar or Explicit Submit Button */}
+      {/* Debounce Auto-Send Bar */}
       {!submitted && debouncePending && (
-        <div className="pt-1 flex items-center justify-between text-[11px] text-muted">
-          <span>选好停顿后将自动发回…</span>
+        <div className="pt-1 flex items-center justify-between text-xs text-muted">
+          <span>选好停顿后将自动同步…</span>
           <button
             type="button"
             onClick={() =>
@@ -756,36 +799,40 @@ export const A2uiSurfaceRenderer: React.FC<A2uiSurfaceRendererProps> = ({
                 latestModelRef.current,
               )
             }
-            className="px-2.5 py-1 rounded-chip bg-accent text-white font-medium flex items-center gap-1 cursor-pointer"
+            className="px-3 py-1 rounded-chip bg-ink text-surface text-[11px] font-medium flex items-center gap-1 cursor-pointer"
           >
             <Send className="w-2.5 h-2.5" />
-            <span>立即发送</span>
+            <span>立即确认</span>
           </button>
         </div>
       )}
 
-      {!submitted && surface.trigger.mode === 'submit' && (
-        <div className="pt-1 flex justify-end">
-          <button
-            type="button"
-            disabled={isLocked}
-            onClick={() =>
-              fireAction(
-                surface.trigger.action || 'submit_surface',
-                latestModelRef.current,
-                surface.root_id,
-              )
-            }
-            className="px-3.5 py-1.5 rounded-chip bg-ink text-surface text-xs font-medium flex items-center gap-1.5 hover:opacity-90 disabled:opacity-45 cursor-pointer"
-          >
-            <Send className="w-3 h-3" />
-            <span>{surface.trigger.submit_label || '选好啦'}</span>
-          </button>
-        </div>
-      )}
+      {/* Only show Submit button when the surface actually contains interactive form controls! */}
+      {!submitted &&
+        surface.trigger.mode === 'submit' &&
+        hasFormInputs &&
+        !hasExplicitActionButtons && (
+          <div className="pt-1 flex justify-end">
+            <button
+              type="button"
+              disabled={isLocked}
+              onClick={() =>
+                fireAction(
+                  surface.trigger.action || 'submit_surface',
+                  latestModelRef.current,
+                  surface.root_id,
+                )
+              }
+              className="px-3.5 py-1.5 rounded-chip bg-ink text-surface text-xs font-medium flex items-center gap-1.5 hover:opacity-90 disabled:opacity-45 cursor-pointer"
+            >
+              <Check className="w-3 h-3" />
+              <span>{surface.trigger.submit_label || '确认选择'}</span>
+            </button>
+          </div>
+        )}
 
       {submitted && submittedNote && (
-        <div className="text-[11px] text-muted pt-0.5 truncate">{submittedNote}</div>
+        <div className="text-xs text-muted pt-0.5 truncate">{submittedNote}</div>
       )}
     </div>
   );

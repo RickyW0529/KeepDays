@@ -1,6 +1,6 @@
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
-    SqlitePool,
+    Row, SqlitePool,
 };
 use std::{path::Path, str::FromStr, time::Duration};
 
@@ -62,6 +62,7 @@ impl DbPools {
         sqlx::raw_sql(init_sql).execute(&write).await?;
         let agent_sql = include_str!("../../migrations/0002_pet_agent_memory_and_sessions.sql");
         sqlx::raw_sql(agent_sql).execute(&write).await?;
+        ensure_additive_columns(&write).await?;
 
         let read = if is_memory {
             write.clone()
@@ -91,4 +92,42 @@ impl DbPools {
             .execute(&self.write)
             .await;
     }
+}
+
+async fn ensure_additive_columns(write: &SqlitePool) -> Result<(), sqlx::Error> {
+    add_column_if_missing(
+        write,
+        "agent_sessions",
+        "compacted_turn_count",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    add_column_if_missing(
+        write,
+        "agent_stm_segments",
+        "promote_attempts",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn add_column_if_missing(
+    write: &SqlitePool,
+    table: &str,
+    column: &str,
+    col_def: &str,
+) -> Result<(), sqlx::Error> {
+    let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+        .fetch_all(write)
+        .await?;
+    let exists = rows
+        .iter()
+        .any(|r| r.get::<String, _>("name").eq_ignore_ascii_case(column));
+    if !exists {
+        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {col_def}"))
+            .execute(write)
+            .await?;
+    }
+    Ok(())
 }

@@ -54,7 +54,7 @@ export function setSavedSpaceId(spaceId: SnowflakeId) {
 
 let inflightRefresh: Promise<boolean> | null = null;
 
-async function silentRefreshOnce(): Promise<boolean> {
+export async function silentRefreshOnce(): Promise<boolean> {
   if (!inflightRefresh) {
     inflightRefresh = (async () => {
       try {

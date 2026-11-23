@@ -332,11 +332,35 @@ impl JailedSandboxLaunch {
         };
         let priv_dir = escape(&self.jail.host_private_dir);
         let shared_dir = escape(&self.jail.host_shared_dir);
+
+        // Derive the tenant spaces/data root (`.../spaces/<sid>/users/<uid>` -> `.../spaces` & parent data dir)
+        // so sibling user workspaces, local S3 uploads, and SQLite `.db` files cannot be read via `bash`.
+        let mut deny_read_clauses = String::new();
+        if let Some(users_dir) = self.jail.host_private_dir.parent() {
+            let u = escape(users_dir);
+            deny_read_clauses.push_str(&format!("(deny file-read* (subpath \"{u}\"))\n"));
+            if let Some(space_dir) = users_dir.parent() {
+                if let Some(spaces_root) = space_dir.parent() {
+                    let sr = escape(spaces_root);
+                    deny_read_clauses.push_str(&format!("(deny file-read-data (subpath \"{sr}\"))\n"));
+                    if let Some(agent_fs_root) = spaces_root.parent() {
+                        if let Some(data_root) = agent_fs_root.parent() {
+                            let dr = escape(data_root);
+                            deny_read_clauses
+                                .push_str(&format!("(deny file-read-data (subpath \"{dr}\"))\n"));
+                        }
+                    }
+                }
+            }
+        }
+
         format!(
             "(version 1)\n\
              (allow default)\n\
              (deny network*)\n\
              (deny file-write*)\n\
+             {deny_read_clauses}\
+             (allow file-read* (subpath \"{priv_dir}\") (subpath \"{shared_dir}\"))\n\
              (allow file-write* (subpath \"{priv_dir}\") (subpath \"{shared_dir}\") (subpath \"/dev\"))\n"
         )
     }
@@ -394,6 +418,91 @@ impl SandboxLaunch for JailedSandboxLaunch {
             }
         }
 
+        #[cfg(target_os = "linux")]
+        {
+            static CAN_USE_BWRAP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            let bwrap_ok = *CAN_USE_BWRAP.get_or_init(|| {
+                Path::new("/usr/bin/bwrap").exists()
+                    && std::process::Command::new("/usr/bin/bwrap")
+                        .args([
+                            "--unshare-all",
+                            "--die-with-parent",
+                            "--ro-bind",
+                            "/usr",
+                            "/usr",
+                            "--ro-bind-try",
+                            "/bin",
+                            "/bin",
+                            "--ro-bind-try",
+                            "/lib",
+                            "/lib",
+                            "--ro-bind-try",
+                            "/lib64",
+                            "/lib64",
+                            "--dev",
+                            "/dev",
+                            "--proc",
+                            "/proc",
+                            "/usr/bin/true",
+                        ])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .is_ok_and(|s| s.success())
+            });
+            if bwrap_ok {
+                let mut wrapped = tokio::process::Command::new("/usr/bin/bwrap");
+                wrapped
+                    .args([
+                        "--unshare-all",
+                        "--die-with-parent",
+                        "--ro-bind",
+                        "/usr",
+                        "/usr",
+                        "--ro-bind-try",
+                        "/bin",
+                        "/bin",
+                        "--ro-bind-try",
+                        "/lib",
+                        "/lib",
+                        "--ro-bind-try",
+                        "/lib64",
+                        "/lib64",
+                        "--ro-bind-try",
+                        "/etc/alternatives",
+                        "/etc/alternatives",
+                        "--ro-bind-try",
+                        "/etc/ld.so.cache",
+                        "/etc/ld.so.cache",
+                        "--dev",
+                        "/dev",
+                        "--proc",
+                        "/proc",
+                        "--tmpfs",
+                        "/tmp",
+                    ])
+                    .arg("--bind")
+                    .arg(&self.jail.host_private_dir)
+                    .arg(&self.jail.host_private_dir)
+                    .arg("--bind")
+                    .arg(&self.jail.host_shared_dir)
+                    .arg(&self.jail.host_shared_dir)
+                    .arg("--chdir")
+                    .arg(&safe_cwd)
+                    .arg("--")
+                    .arg(&original.program)
+                    .args(&original.args)
+                    .current_dir(&safe_cwd)
+                    .env_clear()
+                    .envs(&clean_env);
+                *cmd = wrapped;
+                return Ok(Some(LaunchReceipt {
+                    sandboxed: true,
+                    backend: None,
+                }));
+            }
+        }
+
         let mut sanitized = tokio::process::Command::new(&original.program);
         sanitized
             .args(&original.args)
@@ -402,7 +511,7 @@ impl SandboxLaunch for JailedSandboxLaunch {
             .envs(&clean_env);
         *cmd = sanitized;
         Ok(Some(LaunchReceipt {
-            sandboxed: cfg!(target_os = "linux"),
+            sandboxed: false,
             backend: None,
         }))
     }

@@ -179,7 +179,21 @@ async fn hydrate_query_assets(
              OR EXISTS (
                SELECT 1 FROM photos p
                JOIN space_members sm ON sm.space_id = p.space_id
-               WHERE p.asset_id = m.id AND sm.user_id = ?1
+               WHERE sm.user_id = ?1
+                 AND (p.asset_id = m.id OR instr(p.post_json, CAST(m.id AS TEXT)) > 0)
+             )
+             OR EXISTS (
+               SELECT 1 FROM space_modules md
+               JOIN space_members sm ON sm.space_id = md.space_id
+               WHERE sm.user_id = ?1
+                 AND instr(md.data_json, CAST(m.id AS TEXT)) > 0
+             )
+             OR EXISTS (
+               SELECT 1 FROM users u
+               JOIN space_members sm_peer ON sm_peer.user_id = u.id
+               JOIN space_members sm_me ON sm_me.space_id = sm_peer.space_id
+               WHERE sm_me.user_id = ?1
+                 AND instr(u.profile_json, CAST(m.id AS TEXT)) > 0
              )
            )",
         placeholders.join(",")

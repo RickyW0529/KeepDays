@@ -660,7 +660,15 @@ export const PhotoWallCanvas: React.FC<PhotoWallCanvasProps> = ({
              ================================================================= */
           <div className="space-y-14">
             {monthSections.map((sec, secIdx) => (
-              <section key={sec.key} className="space-y-5">
+              <section
+                key={sec.key}
+                style={
+                  secIdx > 0
+                    ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 520px' }
+                    : undefined
+                }
+                className="space-y-5"
+              >
                 <div className="flex items-baseline justify-between border-b border-border pb-2.5 select-none">
                   <div className="flex items-baseline gap-2.5">
                     <span className="font-editorial text-xl text-ink tabular-nums">
@@ -750,6 +758,11 @@ export const PhotoWallCanvas: React.FC<PhotoWallCanvasProps> = ({
                 return (
                   <section
                     key={sec.key}
+                    style={
+                      secIdx > 0
+                        ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 620px' }
+                        : undefined
+                    }
                     className={
                       isLargeDesktop
                         ? 'grid grid-cols-[100px_1fr] xl:grid-cols-[108px_1fr] gap-6 xl:gap-7 items-start'

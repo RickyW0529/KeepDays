@@ -87,231 +87,165 @@ interface PlatformToolboxProps {
 }
 
 /**
- * Cute Chubby Miniature Toolbox (Zero Text · Zero Clipping · Hover Pops Open & Peeks Chubby Tools!)
- * Strict back-to-front SVG layer stack + `<clipPath>` pocket guarantees 0% mesh/stroke penetration.
+ * 3D SMEG / Muji Matte-Enamel & Machined-Aluminum Miniature Toolbox
+ * Built with the exact `.kd-fridge-chassis`, `.kd-fridge-door`, `.kd-fridge-seam`, and `.kd-fridge-handle`
+ * 3D material physics as the right-corner Refrigerator — zero cartoon strokes, 0% clipping,
+ * and smooth spring-lid hover reveal of machined steel & terracotta tools!
  */
 const PhysicalToolboxButton: React.FC<{
   status: 'connected' | 'error' | 'idle';
   onClick: () => void;
 }> = ({ status, onClick }) => {
-  const ledColor =
+  const ledStyle =
     status === 'connected'
-      ? '#10B981'
+      ? 'bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.85)]'
       : status === 'error'
-        ? '#F43F5E'
-        : '#D4B483';
+        ? 'bg-rose-500 shadow-[0_0_5px_rgba(244,63,94,0.85)]'
+        : 'bg-black/28';
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label="打开工具箱"
-      className="group relative w-[66px] h-[66px] sm:w-[72px] sm:h-[70px] flex items-end justify-center cursor-pointer select-none outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-[16px] transition-transform duration-200 hover:-translate-y-0.5 active:scale-95 transform-gpu"
-    >
-      <svg
-        viewBox="0 0 80 74"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-full h-full overflow-visible"
+    <div className="flex flex-col items-center">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="打开工具箱"
+        className="group relative w-[44px] sm:w-[50px] pt-[10px] flex flex-col items-center overflow-visible transition-transform duration-200 ease-out hover:-translate-y-0.5 active:scale-[0.98] transform-gpu cursor-pointer select-none outline-none"
       >
-        <defs>
-          {/* Clips peeking tools strictly at the front chest lip (y=36) so shafts never poke out below! */}
-          <clipPath id="kdCuteToolPocket">
-            <rect x="8" y="-12" width="64" height="48" />
-          </clipPath>
-
-          <linearGradient id="kdCuteLidGrad" x1="15" y1="20" x2="65" y2="36" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#E59880" />
-            <stop offset="100%" stopColor="var(--kd-accent)" />
-          </linearGradient>
-
-          <linearGradient id="kdCuteBodyGrad" x1="14" y1="35" x2="66" y2="62" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="var(--kd-fridge-hi)" />
-            <stop offset="65%" stopColor="var(--kd-fridge)" />
-            <stop offset="100%" stopColor="var(--kd-fridge-edge)" />
-          </linearGradient>
-
-          <linearGradient id="kdCuteMetal" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#FCFBF8" />
-            <stop offset="60%" stopColor="#D7D0C5" />
-            <stop offset="100%" stopColor="#A9A094" />
-          </linearGradient>
-
-          <linearGradient id="kdCuteClasp" x1="34" y1="38" x2="46" y2="49" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#FAF6EE" />
-            <stop offset="100%" stopColor="#CFC5B6" />
-          </linearGradient>
-        </defs>
-
-        {/* LAYER 1: Cozy Soft Floor Shadow */}
-        <ellipse
-          cx="40"
-          cy="65.5"
-          rx="23"
-          ry="4"
-          fill="rgba(24, 20, 16, 0.16)"
-          className="transition-opacity duration-300 group-hover:opacity-75"
-        />
-
-        {/* LAYER 2 (BACK): Cute Rounded Terracotta Lid + Chubby Handle
-            Sits BEHIND the tools so when it lifts up on hover, tools pop up cleanly in front of it! */}
-        <g
-          style={{ transformBox: 'fill-box' }}
-          className="transition-transform duration-300 ease-[cubic-bezier(0.34,1.45,0.64,1)] group-hover:-translate-y-[58%]"
-        >
-          {/* Chubby Rounded Carrying Handle */}
-          <path
-            d="M30 23.5V19C30 16.8 31.8 15 34 15H46C48.2 15 50 16.8 50 19V23.5"
-            stroke="#5C473E"
-            strokeWidth="3.8"
-            strokeLinecap="round"
-          />
-          <path
-            d="M30 23.5V19C30 16.8 31.8 15 34 15H46C48.2 15 50 16.8 50 19V23.5"
-            stroke="#F4EDE2"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-
-          {/* Plump Dome Lid */}
-          <path
-            d="M15 29C15 24.6 18.6 21 23 21H57C61.4 21 65 24.6 65 29V36.5H15V29Z"
-            fill="url(#kdCuteLidGrad)"
-            stroke="#5C473E"
-            strokeWidth="1.4"
-            strokeLinejoin="round"
-          />
-          {/* Cute Glossy Pill Highlight on Lid Cheek */}
-          <path
-            d="M21.5 25.2C24 24.2 28.5 24 32.5 24"
-            stroke="rgba(255,255,255,0.55)"
-            strokeWidth="2"
-            strokeLinecap="round"
-          />
-        </g>
-
-        {/* LAYER 3: Cozy Inner Pocket Cavity (Bridges lifted lid & chest rim; 0% opacity when closed -> 0 bleed!) */}
-        <rect
-          x="16.2"
-          y="22"
-          width="47.6"
-          height="15"
-          rx="4"
-          fill="#2B231E"
-          stroke="#5C473E"
-          strokeWidth="1.1"
-          style={{ transformBox: 'fill-box' }}
-          className="origin-bottom scale-y-0 opacity-0 transition-all duration-250 ease-out group-hover:scale-y-100 group-hover:opacity-100"
-        />
-
-        {/* LAYER 4: Cute Chubby Tools Inside Pocket (Clipped strictly above y=36, in front of open lid!) */}
-        <g clipPath="url(#kdCuteToolPocket)">
-          {/* Left: Chubby Rounded Silver Open-End Wrench (可爱圆胖小扳手) */}
-          <g
-            style={{ transformBox: 'fill-box' }}
-            className="origin-bottom translate-y-full opacity-0 transition-all duration-300 ease-[cubic-bezier(0.34,1.52,0.64,1)] group-hover:translate-y-0 group-hover:-rotate-[13deg] group-hover:opacity-100"
+        {/* ── LAYER 1 (TOP): Lifted 3D Enamel Dome Lid + Machined Aluminum Arch Handle ── */}
+        <div className="relative z-10 w-full flex flex-col items-center transition-transform duration-300 ease-[cubic-bezier(0.34,1.38,0.64,1)] group-hover:-translate-y-[8px]">
+          {/* Machined Brushed-Aluminum Carrying Handle */}
+          <svg
+            viewBox="0 0 36 11"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-[20px] sm:w-[23px] h-[6.5px] sm:h-[7.5px] -mb-[1px] overflow-visible"
           >
-            <rect
-              x="28.2"
-              y="22"
-              width="5.6"
-              height="17"
-              rx="2.6"
-              fill="url(#kdCuteMetal)"
-              stroke="#5C534A"
-              strokeWidth="1.25"
+            <defs>
+              <linearGradient id="kdToolboxArchMetal" x1="0" y1="0" x2="0" y2="11" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="42%" stopColor="#DDD6CA" />
+                <stop offset="82%" stopColor="#B8B0A2" />
+                <stop offset="100%" stopColor="#978F81" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M7.5 10.5V5.2C7.5 3.1 9.2 1.5 11.4 1.5H24.6C26.8 1.5 28.5 3.1 28.5 5.2V10.5"
+              stroke="rgba(18,15,12,0.22)"
+              strokeWidth="3.6"
+              strokeLinecap="round"
+              transform="translate(0.6, 0.8)"
             />
             <path
-              d="M25.2 17.2C23 19.6 23.6 23.6 27 25H35C38.4 23.6 39 19.6 36.8 17.2L34.1 21H27.9L25.2 17.2Z"
-              fill="url(#kdCuteMetal)"
-              stroke="#5C534A"
-              strokeWidth="1.25"
-              strokeLinejoin="round"
-            />
-          </g>
-
-          {/* Right: Cute Honey-Handled Stubby Screwdriver (奶黄胖手柄小螺丝刀) */}
-          <g
-            style={{ transformBox: 'fill-box' }}
-            className="origin-bottom translate-y-full opacity-0 transition-all duration-300 delay-[35ms] ease-[cubic-bezier(0.34,1.52,0.64,1)] group-hover:translate-y-0 group-hover:rotate-[12deg] group-hover:opacity-100"
-          >
-            <rect
-              x="47.5"
-              y="25"
-              width="3"
-              height="13.5"
-              rx="1.2"
-              fill="#E5DFD5"
-              stroke="#5C534A"
-              strokeWidth="1.15"
-            />
-            <rect
-              x="44.2"
-              y="16"
-              width="9.6"
-              height="10.8"
-              rx="4.6"
-              fill="#F3C774"
-              stroke="#5C473E"
-              strokeWidth="1.25"
-            />
-            <line
-              x1="47.2"
-              y1="18.8"
-              x2="47.2"
-              y2="23.8"
-              stroke="rgba(255,255,255,0.65)"
-              strokeWidth="1.3"
+              d="M7.5 10.2V5.2C7.5 3.1 9.2 1.5 11.4 1.5H24.6C26.8 1.5 28.5 3.1 28.5 5.2V10.2"
+              stroke="url(#kdToolboxArchMetal)"
+              strokeWidth="3.2"
               strokeLinecap="round"
             />
-          </g>
-        </g>
+            <path
+              d="M11 1.1H25"
+              stroke="rgba(255,255,255,0.78)"
+              strokeWidth="0.9"
+              strokeLinecap="round"
+            />
+            <ellipse cx="7.5" cy="10.3" rx="2.3" ry="0.9" fill="rgba(20,17,14,0.32)" />
+            <ellipse cx="28.5" cy="10.3" rx="2.3" ry="0.9" fill="rgba(20,17,14,0.32)" />
+          </svg>
 
-        {/* LAYER 5 (FRONT): Plump Cream Enamel Lower Chest + Cute Feet + Rounded Buckle Clasp */}
-        <g>
-          {/* Little Cute Rounded Feet */}
-          <rect x="20" y="59" width="8" height="4.5" rx="2.2" fill="#5C473E" />
-          <rect x="52" y="59" width="8" height="4.5" rx="2.2" fill="#5C473E" />
+          {/* Upper Cambered 3D Enamel Lid */}
+          <div
+            style={{
+              boxShadow:
+                '0 2px 5px rgba(10, 9, 8, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
+            }}
+            className="kd-fridge-chassis w-full p-[1.5px] pb-0 rounded-t-[9.5px] rounded-b-[1.5px]"
+          >
+            <div className="kd-fridge-door relative h-[11px] sm:h-[12.5px] w-full rounded-t-[8px] rounded-b-[1px] flex items-center justify-end pr-1.5">
+              <span className="kd-magnet-terracotta w-[4.5px] h-[4.5px] rounded-full opacity-90" />
+            </div>
+          </div>
+        </div>
 
-          {/* Chubby Rounded Chest Body */}
-          <path
-            d="M14 36.5C14 35.4 14.9 34.5 16 34.5H64C65.1 34.5 66 35.4 66 36.5V52C66 57 62 61 57 61H23C18 61 14 57 14 52V36.5Z"
-            fill="url(#kdCuteBodyGrad)"
-            stroke="#5C473E"
-            strokeWidth="1.4"
-            strokeLinejoin="round"
-          />
+        {/* ── LAYER 2 (MIDDLE POCKET): Recessed Cavity + 3D Machined Tools (Strictly clipped at seam!) ── */}
+        <div className="relative z-15 w-full h-0 overflow-visible pointer-events-none">
+          <div className="absolute left-[1.5px] right-[1.5px] bottom-0 h-[19px] overflow-hidden">
+            {/* Soft Warm Recessed Interior Tray */}
+            <div className="absolute inset-x-0 bottom-0 h-[8px] rounded-t-[2px] bg-gradient-to-b from-[#433E38] to-[#2C2824] shadow-[inset_0_2px_4px_rgba(0,0,0,0.48)] origin-bottom scale-y-0 opacity-0 transition-all duration-200 ease-out group-hover:scale-y-100 group-hover:opacity-100" />
 
-          {/* Top Cream Rim Highlight */}
-          <line
-            x1="17"
-            y1="36.4"
-            x2="63"
-            y2="36.4"
-            stroke="rgba(255,255,255,0.72)"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-          />
+            {/* Borderless 3D Machined Satin-Steel Wrench & Matte-Terracotta Screwdriver */}
+            <svg
+              viewBox="0 0 60 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              className="relative w-full h-full"
+            >
+              <defs>
+                <linearGradient id="kdMachinedSteel" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#FFFFFF" />
+                  <stop offset="45%" stopColor="#DCD5C9" />
+                  <stop offset="100%" stopColor="#9B9385" />
+                </linearGradient>
+                <linearGradient id="kdMatteTerracotta" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#E08B70" />
+                  <stop offset="58%" stopColor="#B85D43" />
+                  <stop offset="100%" stopColor="#893D27" />
+                </linearGradient>
+              </defs>
 
-          {/* Cute Warm Rosy Cheek Rivets */}
-          <circle cx="21.5" cy="43.5" r="1.7" fill="#DF9A8C" opacity="0.72" />
-          <circle cx="58.5" cy="43.5" r="1.7" fill="#DF9A8C" opacity="0.72" />
+              <g
+                style={{ transformBox: 'fill-box' }}
+                className="origin-bottom translate-y-[20px] opacity-0 transition-all duration-300 ease-[cubic-bezier(0.34,1.48,0.64,1)] group-hover:translate-y-[2px] group-hover:-rotate-[11deg] group-hover:opacity-100"
+              >
+                <rect x="18.6" y="10.5" width="4.4" height="14" rx="2" fill="url(#kdMachinedSteel)" />
+                <path
+                  d="M16.2 6.2C14.4 8.3 15 11.7 17.8 12.9H23.8C26.6 11.7 27.2 8.3 25.4 6.2L23.2 9.4H18.4L16.2 6.2Z"
+                  fill="url(#kdMachinedSteel)"
+                />
+              </g>
 
-          {/* Cute Chubby Pill Buckle Clasp (Safely below y=34.5 rim -> 0% clipping!) */}
-          <rect
-            x="34.5"
-            y="38.2"
-            width="11"
-            height="11"
-            rx="4"
-            fill="url(#kdCuteClasp)"
-            stroke="#5C473E"
-            strokeWidth="1.25"
-          />
-          <circle cx="40" cy="43.7" r="2.5" fill={ledColor} />
-        </g>
-      </svg>
-    </button>
+              <g
+                style={{ transformBox: 'fill-box' }}
+                className="origin-bottom translate-y-[20px] opacity-0 transition-all duration-300 delay-[30ms] ease-[cubic-bezier(0.34,1.48,0.64,1)] group-hover:translate-y-[2px] group-hover:rotate-[10deg] group-hover:opacity-100"
+              >
+                <rect x="38.2" y="12.5" width="2.6" height="12" rx="1" fill="url(#kdMachinedSteel)" />
+                <rect x="35.3" y="4.8" width="8.4" height="9.4" rx="3.8" fill="url(#kdMatteTerracotta)" />
+                <line
+                  x1="37.8"
+                  y1="7"
+                  x2="37.8"
+                  y2="11.6"
+                  stroke="rgba(255,255,255,0.42)"
+                  strokeWidth="1.1"
+                  strokeLinecap="round"
+                />
+              </g>
+            </svg>
+          </div>
+        </div>
+
+        {/* ── LAYER 3 (FRONT): Physical Gasket Seam + Lower 3D Enamel Chest + Machined Latch ── */}
+        <div className="kd-fridge-chassis relative z-20 w-full p-[1.5px] pt-0 rounded-t-[2px] rounded-b-[6px]">
+          <div className="kd-fridge-seam relative h-[2px] w-full shrink-0">
+            <span className="absolute right-1 top-[0.5px] w-1 h-[1px] rounded-full bg-black/25" />
+          </div>
+
+          <div className="kd-fridge-door relative h-[20px] sm:h-[22.5px] w-full rounded-t-[1.5px] rounded-b-[4.5px] flex flex-col items-center justify-between pt-0 pb-1 px-2">
+            <div className="kd-fridge-handle relative -mt-[1.5px] w-[8px] h-[10px] sm:w-[8.5px] sm:h-[11px] rounded-[2.5px] flex flex-col items-center justify-between py-[2px]">
+              <span className="w-[4px] h-[1px] rounded-full bg-black/22" />
+              <span className={`w-[3px] h-[3px] rounded-full transition-colors ${ledStyle}`} />
+            </div>
+
+            <span className="w-[56%] h-[1.5px] rounded-full bg-black/[0.06] shadow-[0_1px_0_rgba(255,255,255,0.52)]" />
+          </div>
+        </div>
+      </button>
+
+      {/* Proportional Leveling Feet & Floor Shadow */}
+      <div className="w-[74%] flex justify-between px-1">
+        <span className="w-2 h-[2.5px] rounded-b-[1.5px] bg-black/50" />
+        <span className="w-2 h-[2.5px] rounded-b-[1.5px] bg-black/50" />
+      </div>
+      <span aria-hidden className="w-[86%] h-1 rounded-full bg-black/20 blur-[2.5px]" />
+    </div>
   );
 };
 
@@ -893,12 +827,12 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
   return (
     <>
       {/* =====================================================================
-          Bottom-Left Tactile Physical Toolbox (Zero Text · Hover Peeks Wrench!)
+          Bottom-Left 3D SMEG Enamel Toolbox (Matched Pair with Bottom-Right Fridge!)
          ===================================================================== */}
       <div
         style={{
-          bottom: 'max(1.25rem, env(safe-area-inset-bottom))',
-          left: 'max(1.25rem, env(safe-area-inset-left))',
+          bottom: 'max(1.125rem, env(safe-area-inset-bottom))',
+          left: 'max(1rem, env(safe-area-inset-left))',
         }}
         className={`fixed z-30 transition-opacity duration-200 ${
           hidden || open ? 'opacity-0 pointer-events-none' : 'opacity-100'
@@ -911,7 +845,7 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
       </div>
 
       {/* =====================================================================
-          Toolbox Modal (Clean · Slogan-Free · Official Live Model Dropdown)
+          3D SMEG Enamel Utility Cabinet Modal (Unified Design Language with Fridge!)
          ===================================================================== */}
       <AnimatePresence>
         {open && (
@@ -919,59 +853,74 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.16 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
             onClick={onClose}
-            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-6"
+            className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-6"
           >
             <motion.div
-              initial={{ opacity: 0, y: 12, scale: 0.985 }}
+              initial={{ opacity: 0, y: 10, scale: 0.985 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.985 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
               onClick={(e) => e.stopPropagation()}
-              className="w-full sm:max-w-[640px] h-[84dvh] sm:h-auto sm:max-h-[78dvh] bg-panel border border-border-strong rounded-t-card sm:rounded-card shadow-float flex flex-col overflow-hidden transform-gpu"
+              className="w-full sm:max-w-[650px] h-[85dvh] sm:h-auto sm:max-h-[82dvh] flex flex-col items-center transform-gpu"
             >
-              {/* Minimalist Top Bar */}
-              <div className="px-4 py-3 border-b border-border bg-surface/65 flex items-center justify-between gap-3 shrink-0">
-                <div className="flex items-center gap-1 p-1 rounded-input bg-overlay/85 border border-border flex-1 max-w-[360px]">
-                  {(
-                    [
-                      ['models', '模型', Zap],
-                      ['memory', '记忆', BookOpen],
-                      ['mcp', 'MCP', Plug],
-                    ] as const
-                  ).map(([key, label, Icon]) => {
-                    const active = tab === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setTab(key)}
-                        className={`flex-1 h-7 px-2.5 rounded-[6px] text-xs flex items-center justify-center gap-1.5 transition-all duration-150 cursor-pointer ${
-                          active
-                            ? 'bg-panel text-ink font-medium shadow-xs border border-border'
-                            : 'text-muted hover:text-ink'
-                        }`}
-                      >
-                        <Icon className="w-3.5 h-3.5 shrink-0" />
-                        <span>{label}</span>
-                      </button>
-                    );
-                  })}
+              <div className="kd-fridge-chassis w-full flex-1 min-h-0 p-[4px] rounded-t-[26px] sm:rounded-b-[14px] flex flex-col overflow-hidden">
+                {/* ── UPPER ENAMEL LID COMPARTMENT (Matches Fridge Upper Door!) ── */}
+                <div className="kd-fridge-door relative shrink-0 rounded-t-[22px] rounded-b-[4px] px-5 pt-4 pb-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="inline-block px-2 py-0.5 rounded-[3px] bg-overlay/75 border border-border text-[8.5px] font-semibold tracking-[0.3em] text-muted select-none">
+                      KEEPDAYS · TOOLBOX
+                    </span>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      aria-label="关闭工具箱"
+                      className="w-6.5 h-6.5 rounded-chip bg-overlay/70 hover:bg-border-strong/30 border border-border flex items-center justify-center text-muted hover:text-ink transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Tactile Magnetic Paper-Note Style Tabs */}
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {(
+                      [
+                        ['models', '模型', Zap, 'kd-magnet-terracotta'],
+                        ['memory', '记忆', BookOpen, 'kd-magnet-charcoal'],
+                        ['mcp', 'MCP', Plug, 'kd-magnet-muted'],
+                      ] as const
+                    ).map(([key, label, Icon, magnetClass]) => {
+                      const active = tab === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setTab(key)}
+                          className={`relative py-2 px-3 rounded-[4px] text-xs flex items-center justify-center gap-1.5 border transition-all duration-150 cursor-pointer ${
+                            active
+                              ? 'bg-paper-white text-ink font-medium border-accent/65 ring-1 ring-accent/25 shadow-paper -translate-y-[1px]'
+                              : 'bg-paper-oat/80 hover:bg-paper-white text-muted hover:text-ink border-border shadow-2xs'
+                          }`}
+                        >
+                          <span
+                            className={`${magnetClass} w-2 h-2 rounded-full shrink-0`}
+                          />
+                          <Icon className="w-3.5 h-3.5 shrink-0" />
+                          <span>{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={onClose}
-                  aria-label="关闭"
-                  className="w-7 h-7 rounded-chip hover:bg-overlay flex items-center justify-center text-muted hover:text-ink transition-colors cursor-pointer shrink-0"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+                {/* ── RECESSED CENTER GASKET CHANNEL + RIGHT HINGE PIN (Identical to Fridge!) ── */}
+                <div className="kd-fridge-seam relative h-[6px] w-full shrink-0 flex items-center justify-end pr-4">
+                  <span className="w-4 h-[2.5px] rounded-full bg-border-strong" />
+                </div>
 
-              {/* Body */}
-              <div className="flex-1 min-h-0 overflow-y-auto p-5">
+                {/* ── LOWER MAIN ENAMEL CABINET BODY ── */}
+                <div className="kd-fridge-door flex-1 min-h-0 rounded-t-[4px] sm:rounded-b-[10px] overflow-y-auto p-5">
                 {tab === 'models' ? (
                   <div className="space-y-4">
                     {/* Unified 12-Vendor Grid: Active = Green (Connected) or Red + ! (Disconnected) */}
@@ -986,15 +935,17 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
                             (isSelected && Boolean(liveProbeError)));
                         const isConnected = isActive && !isDisconnected;
 
-                        let cardStyle = 'bg-surface border-border hover:border-border-strong text-ink';
+                        let cardStyle =
+                          'bg-paper-white/88 hover:bg-paper-white border-border hover:border-border-strong text-ink shadow-2xs';
                         if (isConnected) {
                           cardStyle =
-                            'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/35 text-ink';
+                            'bg-paper-white border-emerald-500 ring-1 ring-emerald-500/35 text-ink shadow-paper';
                         } else if (isDisconnected) {
                           cardStyle =
-                            'bg-rose-500/10 border-rose-500 ring-1 ring-rose-500/35 text-ink';
+                            'bg-paper-white border-rose-500 ring-1 ring-rose-500/35 text-ink shadow-paper';
                         } else if (isSelected) {
-                          cardStyle = 'bg-panel border-ink ring-1 ring-ink/15 text-ink';
+                          cardStyle =
+                            'bg-paper-white border-ink ring-1 ring-ink/15 text-ink shadow-paper';
                         }
 
                         return (
@@ -1061,7 +1012,7 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
                     {/* Token + Live Official Model Dropdown */}
                     <form
                       onSubmit={handleSaveVendor}
-                      className="p-4 rounded-card bg-surface border border-border space-y-3"
+                      className="p-4 rounded-card bg-paper-white/92 border border-border shadow-paper space-y-3"
                     >
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-ink">{currentVendor.name}</span>
@@ -1263,10 +1214,10 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
                         spellCheck={false}
                         rows={11}
                         placeholder="# 记忆&#10;&#10;- 喜欢微辣，不吃香菜"
-                        className="w-full p-4 rounded-card bg-paper-oat/45 dark:bg-surface border border-border focus:border-border-strong text-xs text-ink leading-relaxed font-mono resize-none focus:outline-none"
+                        className="w-full p-4 rounded-card bg-paper-white border border-border focus:border-border-strong shadow-paper text-xs text-ink leading-relaxed font-mono resize-none focus:outline-none"
                       />
                     ) : (
-                      <div className="min-h-[240px] max-h-[320px] p-4 rounded-card bg-paper-oat/35 dark:bg-surface border border-border overflow-y-auto">
+                      <div className="min-h-[240px] max-h-[320px] p-4 rounded-card bg-paper-white border border-border shadow-paper overflow-y-auto">
                         <MarkdownMemoryPreview content={activeMarkdown} />
                       </div>
                     )}
@@ -1344,12 +1295,12 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
                           return (
                             <div
                               key={m.id}
-                              className={`p-3 rounded-input border transition-colors text-xs space-y-2 ${
+                              className={`p-3 rounded-input border transition-colors text-xs space-y-2 shadow-2xs ${
                                 isOk
-                                  ? 'bg-emerald-500/6 border-emerald-500/45'
+                                  ? 'bg-paper-white border-emerald-500/55'
                                   : isErr
-                                    ? 'bg-rose-500/6 border-rose-500/45'
-                                    : 'bg-surface border-border'
+                                    ? 'bg-paper-white border-rose-500/55'
+                                    : 'bg-paper-white/90 border-border'
                               }`}
                             >
                               <div className="flex items-center justify-between gap-2">
@@ -1600,7 +1551,7 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
                           setSavingMcp(false);
                         }
                       }}
-                      className="p-3.5 rounded-card bg-surface border border-border space-y-2.5"
+                      className="p-3.5 rounded-card bg-paper-white/92 border border-border shadow-paper space-y-2.5"
                     >
                       <div className="flex flex-col sm:flex-row gap-2">
                         <input
@@ -1652,6 +1603,13 @@ export const PlatformToolbox: React.FC<PlatformToolboxProps> = ({
                     </form>
                   </div>
                 )}
+                </div>
+              </div>
+
+              {/* Desktop Cabinet Leveling Feet (Matches Standing Fridge!) */}
+              <div className="hidden sm:flex w-[84%] justify-between px-8 shrink-0">
+                <span className="w-6 h-[5px] rounded-b-[3px] bg-black/55" />
+                <span className="w-6 h-[5px] rounded-b-[3px] bg-black/55" />
               </div>
             </motion.div>
           </motion.div>
